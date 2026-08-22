@@ -38,6 +38,16 @@
   and `c` untouched. Any other expression on a path remains unsupported —
   arithmetic directly on a path value isn't something After Effects supports
   either.
+- New `BakeOptions`, for opting out of the specific parts of expression
+  baking above that are an approximation or a judgment call rather than an
+  exact match to After Effects (`random()`/`wiggle()`, baking on an
+  already-keyframed property, shape-path `wiggle()`, `ease()`/`easeIn()`/
+  `easeOut()`) — every option defaults to `true` (bake everything, today's
+  behavior), so this is purely additive. Threaded through `fix`, `diagnose`,
+  the new `fixupLottieDecoderWithOptions` (`fixupLottieDecoder` keeps its
+  no-argument default-options signature), and new CLI flags
+  (`--no-random-wiggle`, `--no-keyframed-properties`,
+  `--no-shape-path-wiggle`, `--no-approximate-easing`).
 
 ## 0.2.0
 

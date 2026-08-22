@@ -561,4 +561,157 @@ void main() {
       expect(k.first['s'][0]['v'][0], isNot(k.first['s'][0]['v'][1]));
     });
   });
+
+  group('BakeOptions', () {
+    test('bakeRandomAndWiggle: false leaves random()/wiggle() unsupported', () {
+      final layer = _layer('wiggle box', {
+        'p': {
+          'a': 0,
+          'k': [100, 100, 0],
+          'x': 'var \$bm_rt;\n\$bm_rt = wiggle(2, 40);',
+        },
+      });
+      final doc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 60,
+        'layers': [layer],
+      };
+
+      final result = bakePropertyExpressions(
+        doc,
+        options: const BakeOptions(bakeRandomAndWiggle: false),
+      );
+
+      expect(result.propertiesBaked, 0);
+      expect(result.skippedExpressions, [
+        'var \$bm_rt;\n\$bm_rt = wiggle(2, 40);',
+      ]);
+      expect((layer['ks']!['p'] as Map).containsKey('x'), isTrue);
+    });
+
+    test('bakeOnKeyframedProperties: false leaves an expression on real '
+        'keyframes unsupported, matching pre-0.3.0 behavior', () {
+      final layer = _layer('box', {
+        'o': {
+          'x': 'wiggle(2, 10)',
+          'k': [
+            {
+              't': 0,
+              's': [0],
+            },
+            {
+              't': 5,
+              's': [10],
+            },
+          ],
+        },
+      });
+      final doc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 24,
+        'layers': [layer],
+      };
+
+      final result = bakePropertyExpressions(
+        doc,
+        options: const BakeOptions(bakeOnKeyframedProperties: false),
+      );
+
+      expect(result.propertiesBaked, 0);
+      expect(result.skippedExpressions, ['wiggle(2, 10)']);
+      expect((layer['ks']!['o'] as Map).containsKey('x'), isTrue);
+    });
+
+    test(
+      'bakeShapePathWiggle: false leaves wiggle() on a shape path unsupported',
+      () {
+        final pathProp = {
+          'a': 0,
+          'k': {
+            'i': [
+              [0, 0],
+              [0, 0],
+            ],
+            'o': [
+              [0, 0],
+              [0, 0],
+            ],
+            'v': [
+              [-40, 0],
+              [40, 0],
+            ],
+            'c': false,
+          },
+          'x': 'var \$bm_rt;\n\$bm_rt = wiggle(2, 15);',
+        };
+        final layer = {
+          'nm': 'wiggly path',
+          'ty': 4,
+          'ks': {
+            'p': {
+              'a': 0,
+              'k': [0, 0, 0],
+            },
+          },
+          'shapes': [
+            {
+              'ty': 'gr',
+              'it': [
+                {'ty': 'sh', 'ks': pathProp},
+              ],
+            },
+          ],
+        };
+        final doc = {
+          'fr': 30,
+          'ip': 0,
+          'op': 30,
+          'layers': [layer],
+        };
+
+        final result = bakePropertyExpressions(
+          doc,
+          options: const BakeOptions(bakeShapePathWiggle: false),
+        );
+
+        expect(result.propertiesBaked, 0);
+        expect(pathProp.containsKey('x'), isTrue);
+      },
+    );
+
+    test('bakeApproximateEasing: false leaves ease()/easeIn()/easeOut() '
+        'unsupported but linear() still bakes', () {
+      final easedLayer = _layer('eased box', {
+        'o': {
+          'a': 0,
+          'k': 100,
+          'x': 'var \$bm_rt;\n\$bm_rt = ease(time, 0, 1, 0, 100);',
+        },
+      });
+      final linearLayer = _layer('linear box', {
+        'o': {
+          'a': 0,
+          'k': 100,
+          'x': 'var \$bm_rt;\n\$bm_rt = linear(time, 0, 1, 0, 100);',
+        },
+      });
+      final doc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 60,
+        'layers': [easedLayer, linearLayer],
+      };
+
+      final result = bakePropertyExpressions(
+        doc,
+        options: const BakeOptions(bakeApproximateEasing: false),
+      );
+
+      expect(result.propertiesBaked, 1); // only the linear() one
+      expect((easedLayer['ks']!['o'] as Map).containsKey('x'), isTrue);
+      expect((linearLayer['ks']!['o'] as Map).containsKey('x'), isFalse);
+    });
+  });
 }

@@ -45,8 +45,15 @@
 /// [PropertyBakeResult.skippedExpressions]): references into a nested comp
 /// or to `effect(...)`, any expression using syntax this evaluator doesn't
 /// understand, and any non-`wiggle()` expression on a shape path.
+///
+/// Baking `random()`/`wiggle()`, an expression on an already-keyframed
+/// property, `wiggle()` on a shape path, and `ease()`/`easeIn()`/
+/// `easeOut()` are each individually approximations or judgment calls
+/// rather than an exact match to After Effects — pass a [BakeOptions] to opt
+/// out of any of them; see its doc comments for what each one changes.
 library;
 
+import 'bake_options.dart';
 import 'expression_evaluator.dart';
 
 /// Result of baking property expressions in one document.
@@ -79,7 +86,10 @@ const _aliasToKey = {
 /// [doc] in place. Meant to run after `bakeLoopExpressions` in the same
 /// document, so loop expressions it already handled are gone by the time
 /// this pass sees the tree.
-PropertyBakeResult bakePropertyExpressions(Map<String, dynamic> doc) {
+PropertyBakeResult bakePropertyExpressions(
+  Map<String, dynamic> doc, {
+  BakeOptions options = const BakeOptions(),
+}) {
   final fr = (doc['fr'] as num?) ?? 30;
   final start = (doc['ip'] as num?) ?? 0;
   final end = doc['op'] as num? ?? start;
@@ -89,7 +99,7 @@ PropertyBakeResult bakePropertyExpressions(Map<String, dynamic> doc) {
   void walkLayers(List<dynamic> rawLayers) {
     final layers = rawLayers.whereType<Map<String, dynamic>>().toList();
     for (final layer in layers) {
-      _walkNode(layer, layer, layers, fr, start, end, (didBake) {
+      _walkNode(layer, layer, layers, fr, start, end, options, (didBake) {
         if (didBake) {
           baked++;
         }
@@ -117,22 +127,23 @@ void _walkNode(
   num fr,
   num start,
   num end,
+  BakeOptions options,
   void Function(bool baked) report,
   List<String> skipped,
 ) {
   if (node is Map<String, dynamic>) {
     final expr = node['x'];
     if (expr is String) {
-      final ok = _tryBake(node, expr, layer, layers, fr, start, end);
+      final ok = _tryBake(node, expr, layer, layers, fr, start, end, options);
       report(ok);
       if (!ok) skipped.add(expr);
     }
     for (final value in node.values.toList()) {
-      _walkNode(value, layer, layers, fr, start, end, report, skipped);
+      _walkNode(value, layer, layers, fr, start, end, options, report, skipped);
     }
   } else if (node is List) {
     for (final value in node) {
-      _walkNode(value, layer, layers, fr, start, end, report, skipped);
+      _walkNode(value, layer, layers, fr, start, end, options, report, skipped);
     }
   }
 }
@@ -174,12 +185,16 @@ bool _tryBake(
   num fr,
   num start,
   num end,
+  BakeOptions options,
 ) {
   final k = node['k'];
   if (k is Map<String, dynamic> && k['v'] is List) {
+    if (!options.bakeShapePathWiggle || !options.bakeRandomAndWiggle) {
+      return false;
+    }
     return _tryBakeShapePath(node, k, expr, layer, fr, start, end);
   }
-  return _tryBakeNumeric(node, k, expr, layer, layers, fr, start, end);
+  return _tryBakeNumeric(node, k, expr, layer, layers, fr, start, end, options);
 }
 
 bool _tryBakeNumeric(
@@ -191,15 +206,29 @@ bool _tryBakeNumeric(
   num fr,
   num start,
   num end,
+  BakeOptions options,
 ) {
   final isRaw = _isRawValue(k);
   final isKeyframed = !isRaw && _isNumericKeyframeList(k);
   if (!isRaw && !isKeyframed) return false; // e.g. a shape path handled above
+  if (isKeyframed && !options.bakeOnKeyframedProperties) return false;
 
   final List<StmtNode> program;
   try {
     program = parseProgram(expr);
   } on ExpressionEvalError {
+    return false;
+  }
+
+  if (!options.bakeRandomAndWiggle &&
+      (_programCallsFunction(program, 'random') ||
+          _programCallsFunction(program, 'wiggle'))) {
+    return false;
+  }
+  if (!options.bakeApproximateEasing &&
+      (_programCallsFunction(program, 'ease') ||
+          _programCallsFunction(program, 'easeIn') ||
+          _programCallsFunction(program, 'easeOut'))) {
     return false;
   }
 

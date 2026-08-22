@@ -6,27 +6,72 @@ import 'package:lottie_fixup/core.dart';
 
 const _usage = '''
 Usage:
-  dart run lottie_fixup diagnose <file.json> [other files...]
-  dart run lottie_fixup fix <file.json> [other files...]
+  dart run lottie_fixup diagnose [flags] <file.json> [other files...]
+  dart run lottie_fixup fix [flags] <file.json> [other files...]
 
   diagnose  only reports issues, does not modify the file.
   fix       fixes in place: removes crashing audio layers/empty precomps, bakes loopOut()/loopIn().
+
+Flags (each opts out of one approximation/judgment call in expression
+baking; see BakeOptions in the library docs for details on each):
+  --no-random-wiggle          Don't bake random()/wiggle() expressions.
+  --no-keyframed-properties   Don't bake expressions on properties that already have real keyframes.
+  --no-shape-path-wiggle      Don't bake wiggle() on a shape path's vertices.
+  --no-approximate-easing     Don't bake ease()/easeIn()/easeOut() (linear() is unaffected).
 ''';
 
 void main(List<String> args) {
-  if (args.length < 2) {
+  final paths = <String>[];
+  var bakeRandomAndWiggle = true;
+  var bakeOnKeyframedProperties = true;
+  var bakeShapePathWiggle = true;
+  var bakeApproximateEasing = true;
+
+  if (args.isEmpty) {
+    stderr.writeln(_usage);
+    exitCode = 64;
+    return;
+  }
+  final command = args.first;
+
+  for (final arg in args.skip(1)) {
+    switch (arg) {
+      case '--no-random-wiggle':
+        bakeRandomAndWiggle = false;
+      case '--no-keyframed-properties':
+        bakeOnKeyframedProperties = false;
+      case '--no-shape-path-wiggle':
+        bakeShapePathWiggle = false;
+      case '--no-approximate-easing':
+        bakeApproximateEasing = false;
+      default:
+        if (arg.startsWith('--')) {
+          stderr.writeln('Unknown flag: $arg\n');
+          stderr.writeln(_usage);
+          exitCode = 64;
+          return;
+        }
+        paths.add(arg);
+    }
+  }
+
+  if (paths.isEmpty) {
     stderr.writeln(_usage);
     exitCode = 64;
     return;
   }
 
-  final command = args.first;
-  final paths = args.skip(1).toList();
+  final options = BakeOptions(
+    bakeRandomAndWiggle: bakeRandomAndWiggle,
+    bakeOnKeyframedProperties: bakeOnKeyframedProperties,
+    bakeShapePathWiggle: bakeShapePathWiggle,
+    bakeApproximateEasing: bakeApproximateEasing,
+  );
 
   if (command == 'diagnose') {
-    _runDiagnose(paths);
+    _runDiagnose(paths, options);
   } else if (command == 'fix') {
-    _runFix(paths);
+    _runFix(paths, options);
   } else {
     stderr.writeln('Invalid command: $command\n');
     stderr.writeln(_usage);
@@ -34,11 +79,11 @@ void main(List<String> args) {
   }
 }
 
-void _runDiagnose(List<String> paths) {
+void _runDiagnose(List<String> paths, BakeOptions options) {
   for (final path in paths) {
     final raw = File(path).readAsStringSync();
     final doc = jsonDecode(raw) as Map<String, dynamic>;
-    final report = diagnose(raw, doc);
+    final report = diagnose(raw, doc, options: options);
 
     if (!report.hasIssues) {
       print('$path: no issues detected.');
@@ -68,11 +113,11 @@ void _runDiagnose(List<String> paths) {
   }
 }
 
-void _runFix(List<String> paths) {
+void _runFix(List<String> paths, BakeOptions options) {
   for (final path in paths) {
     final file = File(path);
     final doc = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-    final result = fix(doc);
+    final result = fix(doc, options: options);
 
     if (!result.changed) {
       print('$path: nothing to fix.');

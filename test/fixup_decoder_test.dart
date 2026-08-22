@@ -157,4 +157,71 @@ void main() {
     expect(composition!.warnings, isEmpty);
     expect(composition.layers, hasLength(1));
   });
+
+  test('fixupLottieDecoderWithOptions builds a working decoder', () async {
+    final raw = jsonEncode({
+      'v': '5.5.2',
+      'fr': 30,
+      'ip': 0,
+      'op': 30,
+      'w': 200,
+      'h': 200,
+      'nm': 'raw export',
+      'ddd': 0,
+      'assets': <dynamic>[],
+      'layers': [
+        {
+          'ddd': 0,
+          'ind': 1,
+          'ty': 4,
+          'nm': 'shape',
+          'sr': 1,
+          'ks': {
+            'o': {'a': 0, 'k': 100},
+            'r': {'a': 0, 'k': 0},
+            'p': {
+              'a': 0,
+              'k': [0, 0, 0],
+              'x': 'var \$bm_rt;\n\$bm_rt = wiggle(2, 40);',
+            },
+            'a': {
+              'a': 0,
+              'k': [0, 0, 0],
+            },
+            's': {
+              'a': 0,
+              'k': [100, 100, 100],
+            },
+          },
+          'ao': 0,
+          'shapes': [
+            {
+              'ty': 'rc',
+              'p': {
+                'a': 0,
+                'k': [0, 0],
+              },
+              's': {
+                'a': 0,
+                'k': [50, 50],
+              },
+              'r': {'a': 0, 'k': 0},
+            },
+          ],
+          'ip': 0,
+          'op': 30,
+          'st': 0,
+          'bm': 0,
+        },
+      ],
+    });
+
+    final decoder = fixupLottieDecoderWithOptions(
+      const BakeOptions(bakeRandomAndWiggle: false),
+    );
+    final composition = await decoder(utf8.encode(raw));
+
+    expect(composition, isNotNull);
+    expect(composition!.layers, hasLength(1));
+  });
 }

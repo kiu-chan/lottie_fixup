@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:lottie/lottie.dart';
 
+import 'bake_options.dart';
 import 'fix.dart';
 
 /// A [LottieDecoder] that runs [fix] on the bytes before parsing, so a raw
@@ -25,4 +26,25 @@ Future<LottieComposition?> fixupLottieDecoder(List<int> bytes) async {
   final doc = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
   fix(doc);
   return LottieComposition.parseJsonBytes(utf8.encode(jsonEncode(doc)));
+}
+
+/// Like [fixupLottieDecoder], but with [options] passed through to [fix] —
+/// use this instead when you want to opt out of one of the more
+/// approximate/judgment-call parts of expression baking (see
+/// [BakeOptions]):
+///
+/// ```dart
+/// Lottie.asset(
+///   'assets/character.json',
+///   decoder: fixupLottieDecoderWithOptions(
+///     const BakeOptions(bakeOnKeyframedProperties: false),
+///   ),
+/// )
+/// ```
+LottieDecoder fixupLottieDecoderWithOptions(BakeOptions options) {
+  return (bytes) async {
+    final doc = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    fix(doc, options: options);
+    return LottieComposition.parseJsonBytes(utf8.encode(jsonEncode(doc)));
+  };
 }

@@ -43,7 +43,7 @@ Add the dependency:
 
 ```yaml
 dependencies:
-  lottie_fixup: ^0.2.0
+  lottie_fixup: ^0.3.0
 ```
 
 ## Usage
@@ -98,6 +98,43 @@ final result = fix(doc); // mutates doc in place
 if (result.changed) {
   file.writeAsStringSync(jsonEncode(doc));
 }
+```
+
+## Configuration: opting out of approximations
+
+A few parts of expression baking are an approximation or a judgment call
+rather than an exact match to what After Effects would render — see
+[Features](#features) above. `BakeOptions` lets you turn any of them off
+individually; every option defaults to `true` (bake everything), and turning
+one off only ever makes baking *more conservative* — the affected
+expressions are reported as unsupported instead of altered:
+
+| Option | Default | Turn off to... |
+| --- | --- | --- |
+| `bakeRandomAndWiggle` | `true` | Leave `random()`/`wiggle()` unbaked (also disables `bakeShapePathWiggle`). |
+| `bakeOnKeyframedProperties` | `true` | Only bake never-keyframed (`"a": 0`) properties, matching versions before 0.3.0. |
+| `bakeShapePathWiggle` | `true` | Leave `wiggle()` on a shape path unbaked. |
+| `bakeApproximateEasing` | `true` | Leave `ease()`/`easeIn()`/`easeOut()` unbaked (`linear()` is unaffected — it's an exact formula, not an approximation). |
+
+It plugs into every entry point:
+
+```dart
+const options = BakeOptions(bakeOnKeyframedProperties: false);
+
+// Library
+fix(doc, options: options);
+diagnose(rawJson, doc, options: options); // pass the same options you'll fix() with
+
+// At load time
+Lottie.asset(
+  'assets/character.json',
+  decoder: fixupLottieDecoderWithOptions(options),
+)
+```
+
+```bash
+# CLI
+lottie_fixup fix --no-keyframed-properties assets/animations/*.json
 ```
 
 ## What this does *not* fix

@@ -4,6 +4,7 @@ library;
 import 'dart:convert';
 
 import 'bake_loop_expressions.dart';
+import 'bake_options.dart';
 import 'bake_property_expressions.dart';
 
 /// Report of issues found in a Lottie document, without fixing anything.
@@ -50,8 +51,14 @@ class Diagnosis {
 }
 
 /// Inspects a decoded Lottie [doc] (and its [rawJson] source) without
-/// changing anything.
-Diagnosis diagnose(String rawJson, Map<String, dynamic> doc) {
+/// changing anything. Pass the same [options] you intend to call `fix` with
+/// so this reports exactly what that call would (or wouldn't) bake — see
+/// [BakeOptions].
+Diagnosis diagnose(
+  String rawJson,
+  Map<String, dynamic> doc, {
+  BakeOptions options = const BakeOptions(),
+}) {
   var audioLayers = 0;
   var emptyPrecomps = 0;
 
@@ -75,7 +82,7 @@ Diagnosis diagnose(String rawJson, Map<String, dynamic> doc) {
   // untouched — matching the order `fix` itself runs the two passes in.
   final freshDoc = jsonDecode(rawJson) as Map<String, dynamic>;
   final bake = bakeLoopExpressions(freshDoc);
-  final propertyBake = bakePropertyExpressions(freshDoc);
+  final propertyBake = bakePropertyExpressions(freshDoc, options: options);
 
   return Diagnosis(
     audioLayers: audioLayers,

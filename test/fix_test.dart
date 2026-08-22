@@ -43,4 +43,32 @@ void main() {
     final second = fix(doc);
     expect(second.changed, isFalse);
   });
+
+  test('fix forwards options to bakePropertyExpressions', () {
+    final doc = {
+      'fr': 30,
+      'ip': 0,
+      'op': 60,
+      'layers': [
+        {
+          'ty': 4,
+          'ks': {
+            'p': {
+              'a': 0,
+              'k': [100, 100, 0],
+              'x': 'var \$bm_rt;\n\$bm_rt = wiggle(2, 40);',
+            },
+          },
+        },
+      ],
+    };
+
+    final result = fix(
+      doc,
+      options: const BakeOptions(bakeRandomAndWiggle: false),
+    );
+
+    expect(result.propertyBake.propertiesBaked, 0);
+    expect(result.propertyBake.skippedExpressions, isNotEmpty);
+  });
 }

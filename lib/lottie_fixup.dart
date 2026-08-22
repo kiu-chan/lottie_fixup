@@ -8,4 +8,5 @@
 library;
 
 export 'core.dart';
-export 'src/fixup_decoder.dart' show fixupLottieDecoder;
+export 'src/fixup_decoder.dart'
+    show fixupLottieDecoder, fixupLottieDecoderWithOptions;
