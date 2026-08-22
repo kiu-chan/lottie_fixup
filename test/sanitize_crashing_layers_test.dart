@@ -19,7 +19,7 @@ void main() {
       expect((doc['layers'] as List).single, containsPair('ty', 4));
     });
 
-    test('removes an empty precomp asset', () {
+    test('removes an unreferenced empty precomp asset', () {
       final doc = {
         'layers': <dynamic>[],
         'assets': [
@@ -31,6 +31,27 @@ void main() {
 
       expect(result.emptyPrecompsRemoved, 1);
       expect(doc['assets'], isEmpty);
+    });
+
+    test('keeps an empty precomp asset still refId-ed by a layer', () {
+      // Bug thật đã gặp: một layer preComp trỏ tới precomp rỗng (AE xuất
+      // placeholder). Xoá asset đó vì "rỗng" để lại `refId` treo, crash
+      // `composition.getPrecomps(refId)!` lúc dựng render tree — muộn hơn
+      // và khác lỗi null-check `ks` của layer audio, chỉ lộ ra khi render
+      // thật chứ không phải lúc parse JSON.
+      final doc = {
+        'layers': [
+          {'ty': 0, 'nm': 'placeholder', 'refId': 'comp_7', 'ks': {}},
+        ],
+        'assets': [
+          {'id': 'comp_7', 'layers': <dynamic>[]},
+        ],
+      };
+
+      final result = sanitizeCrashingLayers(doc);
+
+      expect(result.changed, isFalse);
+      expect(doc['assets'], hasLength(1));
     });
 
     test('prunes an asset only referenced by the removed audio layer', () {

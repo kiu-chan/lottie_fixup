@@ -43,10 +43,36 @@ Safe to apply unconditionally, even to files already fixed ahead of time:
 decode/walk/re-encode runs once per composition load — `lottie` caches the
 parsed `LottieComposition` afterward — not once per frame.
 
+That one-time cost isn't free, though. Measured on a 365 KB animation
+(20-run average, on a fast desktop machine):
+
+| | avg. time |
+|---|---|
+| `LottieComposition.fromBytes` (no fixup) | ~5.8 ms |
+| `fixupLottieDecoder` (decode + fix + re-encode + parse) | ~17.3 ms |
+
+The overhead is mostly the generic `jsonDecode`/`jsonEncode` round-trip
+through `Map<String, dynamic>`, not the `fix` logic itself — `lottie`'s own
+parser reads bytes more directly. By default this runs **synchronously on
+the UI isolate**, as part of `AssetLottie.load()`; for a file this size,
+that's already close to one frame budget (16.7 ms at 60 fps) on a fast
+machine, and proportionally worse on low-end hardware. Pass
+`backgroundLoading: true` to move it off the UI thread (`lottie` runs it via
+`compute()` on a background isolate):
+
+```dart
+Lottie.asset(
+  'assets/character.json',
+  decoder: fixupLottieDecoder,
+  backgroundLoading: true,
+)
+```
+
 ### Fix ahead of time — CLI
 
 For an animation that ships in every build and never changes, fixing once
-and shipping the clean file avoids that per-load cost entirely:
+and shipping the clean file skips this cost entirely — the decoder has
+nothing left to do:
 
 ```bash
 dart pub global activate lottie_fixup

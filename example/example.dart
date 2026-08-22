@@ -2,7 +2,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:lottie_fixup/lottie_fixup.dart';
+import 'package:lottie_fixup/core.dart';
 
 void main(List<String> args) {
   final path = args.isNotEmpty ? args.first : 'animation.json';
