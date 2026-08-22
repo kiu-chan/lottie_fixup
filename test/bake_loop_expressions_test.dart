@@ -208,7 +208,7 @@ void main() {
     });
 
     test(
-      'unsupported loop modes (offset/continue) are reported, not mis-baked',
+      "loopOut('offset') trends by the per-period delta, never snapping back",
       () {
         final prop = _property([
           {
@@ -216,8 +216,168 @@ void main() {
             's': [0],
           },
           {
-            't': 5,
+            't': 10,
             's': [10],
+          },
+        ], "loopOut('offset')");
+        final doc = {'op': 35, 'nested': prop};
+
+        final result = bakeLoopExpressions(doc);
+
+        expect(result.propertiesBaked, 1);
+        final k = (prop['k'] as List).cast<Map<String, dynamic>>();
+        expect(k.map((kf) => kf['t']).toList(), [0, 10, 20, 30, 40]);
+        expect(k.map((kf) => kf['s']).toList(), [
+          [0],
+          [10],
+          [20],
+          [30],
+          [40],
+        ]);
+      },
+    );
+
+    test("loopIn('offset') continues the same trend backward", () {
+      final prop = _property([
+        {
+          't': 40,
+          's': [100],
+        },
+        {
+          't': 50,
+          's': [110],
+        },
+      ], "loopIn('offset')");
+      final doc = {'ip': 0, 'op': 50, 'nested': prop};
+
+      final result = bakeLoopExpressions(doc);
+
+      expect(result.propertiesBaked, 1);
+      final k = (prop['k'] as List).cast<Map<String, dynamic>>();
+      expect(k.map((kf) => kf['t']).toList(), [0, 10, 20, 30, 40, 50]);
+      expect(k.map((kf) => kf['s']).toList(), [
+        [60],
+        [70],
+        [80],
+        [90],
+        [100],
+        [110],
+      ]);
+    });
+
+    test(
+      "loopOut('continue') extrapolates a straight segment at the last leg's rate",
+      () {
+        final prop = _property([
+          {
+            't': 0,
+            's': [0],
+          },
+          {
+            't': 10,
+            's': [20],
+          },
+        ], "loopOut('continue')");
+        final doc = {'op': 25, 'nested': prop};
+
+        final result = bakeLoopExpressions(doc);
+
+        expect(result.propertiesBaked, 1);
+        final k = (prop['k'] as List).cast<Map<String, dynamic>>();
+        expect(k, [
+          {
+            't': 0,
+            's': [0],
+          },
+          {
+            't': 10,
+            's': [20],
+            'o': {'x': 0.0, 'y': 0.0},
+          },
+          {
+            't': 25,
+            's': [50], // velocity 2/frame, extrapolated 15 frames past t=10
+            'i': {'x': 1.0, 'y': 1.0},
+          },
+        ]);
+      },
+    );
+
+    test(
+      "loopIn('continue') extrapolates backward at the first leg's rate",
+      () {
+        final prop = _property([
+          {
+            't': 20,
+            's': [0],
+          },
+          {
+            't': 30,
+            's': [20],
+          },
+        ], "loopIn('continue')");
+        final doc = {'ip': 0, 'op': 30, 'nested': prop};
+
+        final result = bakeLoopExpressions(doc);
+
+        expect(result.propertiesBaked, 1);
+        final k = (prop['k'] as List).cast<Map<String, dynamic>>();
+        expect(k, [
+          {
+            't': 0,
+            's': [-40], // velocity 2/frame, extrapolated 20 frames before t=20
+            'o': {'x': 0.0, 'y': 0.0},
+          },
+          {
+            't': 20,
+            's': [0],
+            'i': {'x': 1.0, 'y': 1.0},
+          },
+          {
+            't': 30,
+            's': [20],
+          },
+        ]);
+      },
+    );
+
+    test(
+      "loopOut('offset') on a non-numeric value (e.g. a shape path) is reported, not baked",
+      () {
+        final prop = _property([
+          {
+            't': 0,
+            's': [
+              {
+                'i': [
+                  [0, 0],
+                ],
+                'o': [
+                  [0, 0],
+                ],
+                'v': [
+                  [0, 0],
+                ],
+                'c': false,
+              },
+            ],
+          },
+          {
+            't': 5,
+            's': [
+              {
+                'i': [
+                  [0, 0],
+                ],
+                'o': [
+                  [0, 0],
+                ],
+                'v': [
+                  [10, 10],
+                ],
+                'c': false,
+              },
+            ],
           },
         ], "loopOut('offset')");
         final doc = {'op': 24, 'nested': prop};
@@ -226,7 +386,7 @@ void main() {
 
         expect(result.propertiesBaked, 0);
         expect(result.skippedExpressions, ["loopOut('offset')"]);
-        expect(prop['x'], "loopOut('offset')"); // untouched, not baked as cycle
+        expect(prop['x'], "loopOut('offset')"); // untouched, not baked
       },
     );
 

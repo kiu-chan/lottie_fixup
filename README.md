@@ -9,9 +9,11 @@ empty precomps, and `loopOut()` / `loopIn()` expressions.
 - **Stops the audio-layer crash** — After Effects audio layers (`"ty": 6`)
   ship without the transform block `lottie` expects, which throws
   `Null check operator used on a null value`. This package strips them.
-- **Bakes `loopOut('cycle'|'pingpong')` and `loopIn('cycle')` expressions**
-  into real keyframes, so looping animations don't freeze after their first
-  cycle (`lottie` doesn't execute expressions).
+- **Bakes `loopOut()`/`loopIn()` expressions** into real keyframes, so
+  looping animations don't freeze after their first cycle (`lottie` doesn't
+  execute expressions). All four After Effects loop modes are supported —
+  `'cycle'`, `'pingpong'` (loopOut only), `'offset'`, `'continue'` — the
+  latter two on any numeric property (position, scale, rotation, opacity...).
 - **Prunes empty precomps** and now-unreferenced assets left behind by the
   fixes above.
 - Use it **at load time** (drop-in decoder, no build step) or **ahead of
@@ -82,11 +84,18 @@ if (result.changed) {
 
 ## What this does *not* fix
 
-- Expressions other than `loopOut('cycle'|'pingpong')`/`loopIn('cycle')`
-  (e.g. `wiggle`, `valueAtTime`, `loopIn('pingpong')`, the `'offset'`/
-  `'continue'` loop modes, or a property that calls both `loopIn` and
-  `loopOut`) are reported (`diagnose`, or `FixResult.bake.skippedExpressions`)
-  but left untouched, rather than baked incorrectly.
+- Expressions other than `loopOut`/`loopIn` (e.g. `wiggle`, `valueAtTime`)
+  are reported (`diagnose`, or `FixResult.bake.skippedExpressions`) but left
+  untouched.
+- `loopIn('pingpong')` isn't supported — the mirrored/alternating segment
+  `loopOut('pingpong')` uses doesn't carry over cleanly to tiling backward,
+  so getting it right without visual testing against real playback wasn't a
+  risk worth taking. Reported, not silently mis-baked.
+- `'offset'`/`'continue'` on a non-numeric value (a shape path, for example,
+  rather than position/scale/rotation/opacity) is reported rather than
+  baked, since those modes work by doing arithmetic directly on the value.
+- A property that calls both `loopIn` and `loopOut` (a manual "loop both
+  ways" expression) is reported rather than guessed at.
 - A layer missing `ks` for a reason other than being an audio layer is
   flagged (`SanitizeResult.layersMissingTransform`) rather than silently
   removed, since that could be a real authoring mistake worth checking by

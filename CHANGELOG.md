@@ -4,9 +4,18 @@
   the segment backward from its first keyframe down to `doc['ip']`) —
   previously only `loopOut` was recognized at all, so a property using
   `loopIn` alone was silently left frozen with no warning.
-- `bakeLoopExpressions`: loop modes other than `'cycle'`/`'pingpong'` (After
-  Effects' `'offset'` and `'continue'`) are no longer mis-baked as `'cycle'`;
-  they're left untouched and reported via `skippedExpressions`, same as
+- `bakeLoopExpressions`: loop mode is now parsed precisely instead of
+  guessed from `expr.contains('pingpong')`, so a mode other than `'cycle'`/
+  `'pingpong'` is never silently mis-baked as `'cycle'` again.
+- `bakeLoopExpressions`: `'offset'` and `'continue'` are now baked too, for
+  both `loopOut` and `loopIn`, on any property whose keyframe values are
+  plain numbers (position, scale, rotation, opacity...). `'offset'` repeats
+  the segment shape but shifts each repetition's values by `last - first`,
+  so the property keeps trending instead of snapping back to the start.
+  `'continue'` doesn't repeat keyframes at all — it extrapolates a single
+  straight segment past the boundary keyframe at that segment's own rate of
+  change. Left untouched and reported via `skippedExpressions` when the
+  property's values aren't plain numbers (e.g. a shape path), same as
   `loopIn('pingpong')` (not yet supported) and an expression that calls both
   `loopIn` and `loopOut` on the same property.
 - `Diagnosis` (breaking): `loopOutOccurrences` (a raw substring count over
