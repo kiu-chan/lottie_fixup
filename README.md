@@ -2,7 +2,8 @@
 
 Fixes Lottie/Bodymovin exports that crash or freeze the
 [`lottie`](https://pub.dev/packages/lottie) Flutter package: audio layers,
-empty precomps, and `loopOut()` / `loopIn()` expressions.
+empty precomps, and expressions that `lottie` doesn't execute (`loopOut()`/
+`loopIn()`, `wiggle()`, `random()`, `time`-based motion, cross-layer links).
 
 ## Features
 
@@ -11,9 +12,18 @@ empty precomps, and `loopOut()` / `loopIn()` expressions.
   `Null check operator used on a null value`. This package strips them.
 - **Bakes `loopOut()`/`loopIn()` expressions** into real keyframes, so
   looping animations don't freeze after their first cycle (`lottie` doesn't
-  execute expressions). All four After Effects loop modes are supported —
-  `'cycle'`, `'pingpong'` (loopOut only), `'offset'`, `'continue'` — the
-  latter two on any numeric property (position, scale, rotation, opacity...).
+  execute expressions). All four After Effects loop modes are supported in
+  both directions — `'cycle'`, `'pingpong'`, `'offset'`, `'continue'` — the
+  latter two on any numeric property (position, scale, rotation, opacity...)
+  — plus the duration-based `loopOutDuration()`/`loopInDuration()` variants
+  in `'cycle'`/`'pingpong'` mode.
+- **Bakes other expressions on a never-animated property**: continuous
+  `time`-based motion (e.g. `time * 180` for constant rotation), cross-layer
+  links (`thisComp.layer('Name').transform.position`, copied exactly when
+  that's the whole expression, sampled when combined with other math), and
+  `random()`/`wiggle()` (a deterministic, seeded approximation — After
+  Effects' own noise/PRNG can't be reproduced bit-for-bit, but this is
+  reproducible across builds and beats a frozen property).
 - **Prunes empty precomps** and now-unreferenced assets left behind by the
   fixes above.
 - Use it **at load time** (drop-in decoder, no build step) or **ahead of
@@ -25,7 +35,7 @@ Add the dependency:
 
 ```yaml
 dependencies:
-  lottie_fixup: ^0.1.0
+  lottie_fixup: ^0.2.0
 ```
 
 ## Usage
@@ -84,18 +94,26 @@ if (result.changed) {
 
 ## What this does *not* fix
 
-- Expressions other than `loopOut`/`loopIn` (e.g. `wiggle`, `valueAtTime`)
-  are reported (`diagnose`, or `FixResult.bake.skippedExpressions`) but left
+- Expressions this package's small evaluator doesn't understand (e.g.
+  `valueAtTime`, `effect(...)`, a reference into a nested comp) are reported
+  (`diagnose`, or `FixResult.propertyBake.skippedExpressions`) but left
   untouched.
-- `loopIn('pingpong')` isn't supported — the mirrored/alternating segment
-  `loopOut('pingpong')` uses doesn't carry over cleanly to tiling backward,
-  so getting it right without visual testing against real playback wasn't a
-  risk worth taking. Reported, not silently mis-baked.
+- An expression on a property that's *already* keyframed but isn't a
+  `loopOut`/`loopIn`/`loopOutDuration`/`loopInDuration` call (e.g. `wiggle`
+  layered on top of real keyframes, not just a static value) is reported
+  rather than baked — baking it would mean sampling the property's own
+  moving value as the base to jitter around, which isn't implemented.
 - `'offset'`/`'continue'` on a non-numeric value (a shape path, for example,
   rather than position/scale/rotation/opacity) is reported rather than
   baked, since those modes work by doing arithmetic directly on the value.
+- A duration variant (`loopOutDuration`/`loopInDuration`) whose duration is
+  *shorter* than the keyframed segment itself is reported rather than baked
+  — that would need interpolating a cut point in the middle of the real
+  animation, which isn't implemented.
 - A property that calls both `loopIn` and `loopOut` (a manual "loop both
   ways" expression) is reported rather than guessed at.
+- `random()`/`wiggle()` are baked as a *plausible approximation*, not a
+  bit-exact match to After Effects — see Features above.
 - A layer missing `ks` for a reason other than being an audio layer is
   flagged (`SanitizeResult.layersMissingTransform`) rather than silently
   removed, since that could be a real authoring mistake worth checking by
@@ -103,5 +121,6 @@ if (result.changed) {
 
 ## Additional information
 
-If this package saved you a debugging session, consider
-[buying me a coffee](https://ko-fi.com/monlycute).
+If this package saved you a debugging session, consider buying me a coffee.
+
+[![ko-fi](https://storage.ko-fi.com/cdn/kofi5.png?v=6)](https://ko-fi.com/monlycute)

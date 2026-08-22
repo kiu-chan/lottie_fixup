@@ -56,6 +56,12 @@ void _runDiagnose(List<String> paths) {
         '  - ${report.loopExpressionsToBake} unbaked loopOut()/loopIn() expression(s)',
       );
     }
+    if (report.propertyExpressionsToBake > 0) {
+      print(
+        '  - ${report.propertyExpressionsToBake} unbaked property expression(s) '
+        '(cross-layer link, time-based, random()/wiggle())',
+      );
+    }
     for (final expr in report.unsupportedExpressions.toSet()) {
       print('  ! unsupported expression, will be left as-is: $expr');
     }
@@ -94,9 +100,14 @@ void _runFix(List<String> paths) {
         'baked ${result.bake.propertiesBaked} propert(y/ies) (${result.bake.totalLoops} loop(s))',
       );
     }
+    if (result.propertyBake.propertiesBaked > 0) {
+      parts.add(
+        'baked ${result.propertyBake.propertiesBaked} property expression(s)',
+      );
+    }
     print('$path: ${parts.join(', ')}.');
 
-    for (final expr in result.bake.skippedExpressions.toSet()) {
+    for (final expr in result.propertyBake.skippedExpressions.toSet()) {
       print('  ! skipped unsupported expression: $expr');
     }
     for (final warning in result.sanitize.layersMissingTransform) {

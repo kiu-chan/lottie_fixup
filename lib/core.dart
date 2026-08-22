@@ -9,6 +9,8 @@ library;
 
 export 'src/bake_loop_expressions.dart'
     show BakeResult, bakeLoopExpressions, loopGap;
+export 'src/bake_property_expressions.dart'
+    show PropertyBakeResult, bakePropertyExpressions;
 export 'src/diagnose.dart' show Diagnosis, diagnose;
 export 'src/fix.dart' show FixResult, fix;
 export 'src/sanitize_crashing_layers.dart'

@@ -1,4 +1,39 @@
-## Unreleased
+## 0.2.0
+
+- `bakeLoopExpressions`: `loopIn('pingpong')` is now baked too, mirroring
+  the segment backward from the first keyframe the same way
+  `loopOut('pingpong')` already mirrors it forward — previously reported as
+  unsupported.
+- `bakeLoopExpressions`: the duration-based `loopOutDuration(type,
+  durationSeconds)`/`loopInDuration(type, durationSeconds)` variants are now
+  baked in `'cycle'`/`'pingpong'` mode, by repeating a fixed-length span of
+  time (rather than the whole keyframed segment) ending/starting at the
+  boundary keyframe, holding flat wherever that span reaches past the
+  actually-keyframed range. A duration shorter than the keyframed segment
+  itself isn't supported (would need interpolating a cut point mid-segment)
+  and is reported instead.
+- Fixed a latent crash in the `'pingpong'` mirroring helper when a keyframe
+  had no `i`/`o` easing recorded at all (falls back to linear instead of a
+  null-cast error).
+- New `bakePropertyExpressions` (exported from `core.dart`), run by `fix`
+  after `bakeLoopExpressions`: bakes expressions on a property that was
+  never manually keyframed (`"a": 0`) that aren't a loop call —
+  `time`-based motion (e.g. `time * 180` for continuous rotation),
+  cross-layer links (`thisComp.layer('Name').transform.position`, copied
+  exactly when that's the whole expression, otherwise sampled alongside
+  other arithmetic), and `random()`/`wiggle()` (a seeded, deterministic
+  approximation — After Effects' own noise/PRNG isn't reproducible
+  bit-for-bit, but this is reproducible across builds and beats a frozen
+  property).
+- `Diagnosis` (breaking): adds `propertyExpressionsToBake`, and
+  `unsupportedExpressions` now reflects what's left after *both* bake passes
+  run (previously only `bakeLoopExpressions`'), so it no longer lists
+  expressions `bakePropertyExpressions` can actually handle.
+- `FixResult` (breaking): adds `propertyBake` (a `PropertyBakeResult`).
+- CLI: reports unbaked/baked property expressions alongside loop
+  expressions.
+
+## 0.1.1
 
 - `bakeLoopExpressions` (fix): expressions on a scalar property that was
   never manually keyframed (`"a": 0`, e.g. rotation or opacity with a

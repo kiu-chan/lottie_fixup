@@ -187,7 +187,43 @@ void main() {
       ]);
     });
 
-    test('loopIn(pingpong) is not supported and is reported', () {
+    test('loopIn(pingpong) mirrors the segment backward, alternating with the '
+        'plain shape further back', () {
+      final prop = _property([
+        {
+          't': 20,
+          's': [0],
+          'i': {'x': 0.2, 'y': 0.0},
+          'o': {'x': 0.8, 'y': 1.0},
+        },
+        {
+          't': 26,
+          's': [10],
+        },
+      ], "loopIn('pingpong')");
+      final doc = {'ip': 0, 'op': 40, 'nested': prop};
+
+      final result = bakeLoopExpressions(doc);
+
+      expect(result.propertiesBaked, 1);
+      expect(prop.containsKey('x'), isFalse);
+      final k = (prop['k'] as List).cast<Map<String, dynamic>>();
+      final times = k.map((kf) => kf['t']).toList();
+      expect(times, orderedEquals(times.toList()..sort()));
+      expect(times.first, lessThanOrEqualTo(0));
+      // The tile immediately before t=20 is the mirrored segment: its
+      // value at t=20 must match the recorded segment's own start (0),
+      // for the animation to connect continuously across the seam.
+      final mirroredTile = k.firstWhere((kf) => kf['t'] == 14);
+      expect(mirroredTile['s'], [10]);
+      final seam = k.firstWhere((kf) => kf['t'] == 20);
+      expect(seam['s'], [0]);
+      // The original segment itself is untouched.
+      expect(k.firstWhere((kf) => kf['t'] == 26)['s'], [10]);
+    });
+
+    test('loopIn(pingpong) falls back to linear easing when a keyframe has '
+        'none, instead of crashing', () {
       final prop = _property([
         {
           't': 0,
@@ -198,14 +234,101 @@ void main() {
           's': [10],
         },
       ], "loopIn('pingpong')");
-      final doc = {'ip': 0, 'op': 24, 'nested': prop};
+      final doc = {'ip': -20, 'op': 24, 'nested': prop};
+
+      final result = bakeLoopExpressions(doc);
+
+      expect(result.propertiesBaked, 1);
+      expect(prop.containsKey('x'), isFalse);
+    });
+
+    test("loopOutDuration(1) repeats a fixed 1-second span (fr=30) ending at "
+        'the last keyframe, holding flat wherever that span reaches before '
+        'the first keyframe', () {
+      final prop = _property([
+        {
+          't': 0,
+          's': [50],
+          'i': {'x': 0.667, 'y': 1},
+          'o': {'x': 0.333, 'y': 0},
+        },
+        {
+          't': 10,
+          's': [150],
+        },
+      ], 'loopOutDuration(1)');
+      final doc = {'ip': 0, 'op': 20, 'fr': 30, 'nested': prop};
+
+      final result = bakeLoopExpressions(doc);
+
+      expect(result.propertiesBaked, 1);
+      expect(prop.containsKey('x'), isFalse);
+      final k = (prop['k'] as List).cast<Map<String, dynamic>>();
+      final times = k.map((kf) => kf['t']).toList();
+      expect(times, orderedEquals(times.toList()..sort()));
+      // One period (30 frames) is a 20-frame flat hold at 50 followed by
+      // the real 10-frame ramp to 150, then (an open loop, since 50 != 150)
+      // a snap back to 50 to start the next period. The first period
+      // starts at t = 10 - 30 = -20.
+      expect(k.first['t'], -20);
+      expect(k.first['s'], [50]);
+      expect(k.firstWhere((kf) => kf['t'] == 0)['s'], [50]);
+      // The original ramp's own easing survives untouched.
+      expect(k.firstWhere((kf) => kf['t'] == 0)['o'], {'x': 0.333, 'y': 0});
+      // Just before the seam at t=10, the ramp has reached 150; at t=10
+      // itself it's already snapped back to the next period's flat hold.
+      final seam = k.firstWhere(
+        (kf) => (kf['t'] as num) > 9 && (kf['t'] as num) < 10,
+      );
+      expect(seam['s'], [150]);
+      expect(k.firstWhere((kf) => kf['t'] == 10)['s'], [50]);
+    });
+
+    test('loopOutDuration shorter than the keyframed segment is not supported '
+        'and is reported', () {
+      final prop = _property([
+        {
+          't': 0,
+          's': [50],
+        },
+        {
+          't': 10,
+          's': [150],
+        },
+      ], 'loopOutDuration(0.1)'); // 3 frames at fr=30 < the 10-frame span
+      final doc = {'ip': 0, 'op': 20, 'fr': 30, 'nested': prop};
 
       final result = bakeLoopExpressions(doc);
 
       expect(result.propertiesBaked, 0);
-      expect(result.skippedExpressions, ["loopIn('pingpong')"]);
-      expect(prop['x'], "loopIn('pingpong')");
+      expect(result.skippedExpressions, ['loopOutDuration(0.1)']);
     });
+
+    test(
+      "loopInDuration('pingpong', 1) is baked using the pingpong tiling",
+      () {
+        final prop = _property([
+          {
+            't': 20,
+            's': [50],
+          },
+          {
+            't': 25,
+            's': [150],
+          },
+        ], "loopInDuration('pingpong', 1)");
+        final doc = {'ip': 0, 'op': 40, 'fr': 30, 'nested': prop};
+
+        final result = bakeLoopExpressions(doc);
+
+        expect(result.propertiesBaked, 1);
+        expect(prop.containsKey('x'), isFalse);
+        final k = (prop['k'] as List).cast<Map<String, dynamic>>();
+        final times = k.map((kf) => kf['t']).toList();
+        expect(times, orderedEquals(times.toList()..sort()));
+        expect(times.first, lessThan(0));
+      },
+    );
 
     test(
       "loopOut('offset') trends by the per-period delta, never snapping back",

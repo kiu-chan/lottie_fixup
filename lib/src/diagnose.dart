@@ -4,6 +4,7 @@ library;
 import 'dart:convert';
 
 import 'bake_loop_expressions.dart';
+import 'bake_property_expressions.dart';
 
 /// Report of issues found in a Lottie document, without fixing anything.
 class Diagnosis {
@@ -11,6 +12,7 @@ class Diagnosis {
     required this.audioLayers,
     required this.emptyPrecomps,
     required this.loopExpressionsToBake,
+    required this.propertyExpressionsToBake,
     required this.unsupportedExpressions,
   });
 
@@ -21,20 +23,29 @@ class Diagnosis {
   /// Precomp assets with an empty `layers` list.
   final int emptyPrecomps;
 
-  /// Animated properties with a `loopOut`/`loopIn` expression that `fix`
-  /// can bake into real keyframes.
+  /// Animated properties with a `loopOut`/`loopIn`/`loopOutDuration`/
+  /// `loopInDuration` expression that `fix` can bake into real keyframes.
   final int loopExpressionsToBake;
 
-  /// Expressions found that `fix` will leave untouched: anything other than
-  /// a supported `loopOut`/`loopIn` call (e.g. `wiggle`, `valueAtTime`), an
-  /// unsupported loop mode (`'offset'`, `'continue'`), `loopIn('pingpong')`,
-  /// or an expression combining both `loopIn` and `loopOut`.
+  /// Never-keyframed properties with a cross-layer link, `time`-based, or
+  /// `random`/`wiggle` expression that `fix` can bake (see
+  /// `bakePropertyExpressions`).
+  final int propertyExpressionsToBake;
+
+  /// Expressions found that `fix` will leave untouched: an unsupported loop
+  /// mode/shape (e.g. a duration variant shorter than the keyframed
+  /// segment, or an expression combining both `loopIn` and `loopOut`), an
+  /// expression on an already-keyframed property that isn't a loop call
+  /// (e.g. `wiggle` on a property with real keyframes, not just `"a": 0`),
+  /// or syntax this package's expression evaluator doesn't understand
+  /// (nested comps, `effect(...)`, etc.).
   final List<String> unsupportedExpressions;
 
   bool get hasIssues =>
       audioLayers > 0 ||
       emptyPrecomps > 0 ||
       loopExpressionsToBake > 0 ||
+      propertyExpressionsToBake > 0 ||
       unsupportedExpressions.isNotEmpty;
 }
 
@@ -56,15 +67,21 @@ Diagnosis diagnose(String rawJson, Map<String, dynamic> doc) {
     }
   }
 
-  // bakeLoopExpressions mutates its argument, so run it on a fresh decode of
-  // rawJson rather than the caller's doc, to reuse its detection logic
-  // without actually changing anything the caller can see.
-  final bake = bakeLoopExpressions(jsonDecode(rawJson) as Map<String, dynamic>);
+  // bakeLoopExpressions/bakePropertyExpressions mutate their argument, so
+  // run them on a fresh decode of rawJson rather than the caller's doc, to
+  // reuse their detection logic without actually changing anything the
+  // caller can see. propertyBake runs second, on the same freshly-baked
+  // doc, so it only sees (and reports on) expressions the loop bake left
+  // untouched — matching the order `fix` itself runs the two passes in.
+  final freshDoc = jsonDecode(rawJson) as Map<String, dynamic>;
+  final bake = bakeLoopExpressions(freshDoc);
+  final propertyBake = bakePropertyExpressions(freshDoc);
 
   return Diagnosis(
     audioLayers: audioLayers,
     emptyPrecomps: emptyPrecomps,
     loopExpressionsToBake: bake.propertiesBaked,
-    unsupportedExpressions: bake.skippedExpressions,
+    propertyExpressionsToBake: propertyBake.propertiesBaked,
+    unsupportedExpressions: propertyBake.skippedExpressions,
   );
 }

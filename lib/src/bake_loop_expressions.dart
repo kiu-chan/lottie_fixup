@@ -7,20 +7,27 @@
 /// property just freezes. This spreads the keyframes out for real, the same
 /// way After Effects interprets those calls.
 ///
-/// Supported: `loopOut`/`loopIn` in `'cycle'`, `'offset'`, and `'continue'`
-/// mode (`'pingpong'` is loopOut-only), on any animated property. `'offset'`
-/// and `'continue'` additionally require every keyframe's value to be a
-/// plain numeric list (position/scale/rotation/opacity, not a shape path or
-/// other structured value), since baking them means doing arithmetic on the
-/// values themselves.
+/// Supported: `loopOut`/`loopIn` in `'cycle'`, `'pingpong'`, `'offset'`, and
+/// `'continue'` mode, on any animated property, plus the duration-based
+/// `loopOutDuration`/`loopInDuration(type, durationSeconds)` variants (which
+/// repeat a fixed-length span of time rather than the whole keyframed
+/// segment) in `'cycle'`/`'pingpong'` mode. `'offset'` and `'continue'`
+/// additionally require every keyframe's value to be a plain numeric list
+/// (position/scale/rotation/opacity, not a shape path or other structured
+/// value), since baking them means doing arithmetic on the values
+/// themselves.
 ///
 /// Not supported (left untouched, reported via [BakeResult.skippedExpressions]):
-/// `loopIn('pingpong')`, `'offset'`/`'continue'` on a non-numeric value, any
-/// expression that calls both `loopIn` and `loopOut` on the same property,
-/// and any expression (loop-related or not, e.g. `wiggle`/`random`) on a
-/// property that was never manually keyframed (`"a": 0`) — there's nothing
-/// to repeat since it has no keyframes at all, scalar (`r`, `o`) or
-/// multi-dimensional (`p`, `s`, `a`) alike.
+/// `'offset'`/`'continue'` on a non-numeric value, any expression that calls
+/// both `loopIn` and `loopOut` on the same property, a duration variant
+/// whose duration is shorter than the keyframed segment itself (would need
+/// interpolating a cut point mid-segment, which isn't implemented), and any
+/// expression (loop-related or not, e.g. `wiggle`/`random`) on a property
+/// that was never manually keyframed (`"a": 0`) — there's nothing to repeat
+/// since it has no keyframes at all, scalar (`r`, `o`) or multi-dimensional
+/// (`p`, `s`, `a`) alike. (`wiggle`/`random`/`time`-based expressions and
+/// cross-layer references on such a property are instead handled by
+/// `bakePropertyExpressions`.)
 library;
 
 /// Gap (in frames) left between the end of one loop and the start of the
@@ -49,6 +56,14 @@ const Map<String, double> _linearIn = {'x': 1.0, 'y': 1.0};
 /// defaults to `'cycle'`.
 final RegExp _loopCall = RegExp(r'''loop(In|Out)\s*\(\s*(?:['"](\w+)['"])?''');
 
+/// Matches a `loopInDuration(...)`/`loopOutDuration(...)` call. Group 1 is
+/// `In`/`Out`; group 3 is the loop mode (defaults to `'cycle'` when
+/// omitted, same as [_loopCall]); group 4 is the duration argument, in
+/// seconds.
+final RegExp _loopDurationCall = RegExp(
+  r'''loop(In|Out)Duration\s*\(\s*(?:(['"])(\w+)\2\s*,\s*)?([\d.]+)?''',
+);
+
 /// Result of baking loop expressions in one document.
 class BakeResult {
   const BakeResult({
@@ -64,8 +79,9 @@ class BakeResult {
   final int totalLoops;
 
   /// Expressions that were found but weren't baked — not a `loopOut`/
-  /// `loopIn` call, `loopIn('pingpong')`, `'offset'`/`'continue'` on a
-  /// non-numeric value, or an expression combining both `loopIn` and
+  /// `loopIn`/`loopOutDuration`/`loopInDuration` call, `'offset'`/
+  /// `'continue'` on a non-numeric value, a duration variant shorter than
+  /// the keyframed segment, or an expression combining both `loopIn` and
   /// `loopOut` — and were left as-is.
   final List<String> skippedExpressions;
 
@@ -78,9 +94,10 @@ class BakeResult {
 BakeResult bakeLoopExpressions(Map<String, dynamic> doc) {
   final start = (doc['ip'] as num?) ?? 0;
   final end = doc['op'] as num;
+  final fr = (doc['fr'] as num?) ?? 30;
   final loopCounts = <int>[];
   final skipped = <String>[];
-  _walk(doc, start, end, loopCounts, skipped);
+  _walk(doc, start, end, fr, loopCounts, skipped);
   return BakeResult(
     propertiesBaked: loopCounts.length,
     totalLoops: loopCounts.fold(0, (a, b) => a + b),
@@ -92,6 +109,7 @@ void _walk(
   dynamic node,
   num start,
   num end,
+  num fr,
   List<int> loopCounts,
   List<String> skipped,
 ) {
@@ -108,40 +126,89 @@ void _walk(
       final keyframed = k is List && k.isNotEmpty && k.every((kf) => kf is Map);
       if (!keyframed) {
         skipped.add(expr);
-      } else {
-        final matches = _loopCall.allMatches(expr).toList();
-        // Anything other than exactly one loopIn/loopOut call — none (not a
-        // loop expression at all), or two (loopIn and loopOut combined on
-        // the same property) — isn't safe to bake automatically.
-        if (matches.length == 1) {
-          final forward = matches.single.group(1) == 'Out';
-          final mode = matches.single.group(2) ?? 'cycle';
-          final supported = switch (mode) {
-            'cycle' => true,
-            'pingpong' => forward,
-            'offset' || 'continue' => _numericKeyframes(k),
-            _ => false,
-          };
-          if (supported) {
-            loopCounts.add(
-              _bakeProperty(node, start, end, forward: forward, mode: mode),
-            );
-          } else {
-            skipped.add(expr);
-          }
-        } else {
-          skipped.add(expr);
-        }
+      } else if (!_bakeMatchedLoop(node, expr, k, start, end, fr, loopCounts)) {
+        skipped.add(expr);
       }
     }
     for (final value in node.values.toList()) {
-      _walk(value, start, end, loopCounts, skipped);
+      _walk(value, start, end, fr, loopCounts, skipped);
     }
   } else if (node is List) {
     for (final value in node) {
-      _walk(value, start, end, loopCounts, skipped);
+      _walk(value, start, end, fr, loopCounts, skipped);
     }
   }
+}
+
+/// Tries to match and bake [expr] as a loop call on an already-keyframed
+/// property. Returns whether it was baked (and, if so, has already recorded
+/// its loop count into [loopCounts]).
+bool _bakeMatchedLoop(
+  Map<String, dynamic> node,
+  String expr,
+  List<dynamic> k,
+  num start,
+  num end,
+  num fr,
+  List<int> loopCounts,
+) {
+  final matches = _loopCall.allMatches(expr).toList();
+  final durationMatches = _loopDurationCall.allMatches(expr).toList();
+
+  // Anything other than exactly one loop call of one kind — none (not a
+  // loop expression at all), or more than one (e.g. loopIn and loopOut
+  // combined on the same property) — isn't safe to bake automatically.
+  if (matches.length == 1 && durationMatches.isEmpty) {
+    final forward = matches.single.group(1) == 'Out';
+    final mode = matches.single.group(2) ?? 'cycle';
+    final supported = switch (mode) {
+      'cycle' || 'pingpong' => true,
+      'offset' || 'continue' => _numericKeyframes(k),
+      _ => false,
+    };
+    if (!supported) return false;
+    loopCounts.add(
+      _bakeProperty(node, start, end, forward: forward, mode: mode),
+    );
+    return true;
+  }
+
+  if (durationMatches.length == 1 && matches.isEmpty) {
+    final match = durationMatches.single;
+    final forward = match.group(1) == 'Out';
+    final mode = match.group(3) ?? 'cycle';
+    final durationSeconds = num.tryParse(match.group(4) ?? '');
+    // Only 'cycle'/'pingpong' are supported for the duration variant: unlike
+    // tiling a whole segment, extrapolation ('continue') has no notion of a
+    // fixed period, and 'offset' over an arbitrary duration isn't a
+    // documented After Effects behavior worth guessing at.
+    if (mode != 'cycle' && mode != 'pingpong') return false;
+    if (durationSeconds == null || durationSeconds <= 0) return false;
+    final durationFrames = durationSeconds * fr;
+    final t0 = (k.first as Map)['t'] as num;
+    final tEnd = (k.last as Map)['t'] as num;
+    // Only supported when the requested duration reaches past the actual
+    // keyframed span, so the "extra" time is a flat hold rather than a cut
+    // through the middle of the real animation (which would need
+    // interpolating a value at that cut point — not implemented).
+    final feasible = forward
+        ? (tEnd - durationFrames) < t0
+        : (t0 + durationFrames) > tEnd;
+    if (!feasible) return false;
+    loopCounts.add(
+      _bakeProperty(
+        node,
+        start,
+        end,
+        forward: forward,
+        mode: mode,
+        durationFrames: durationFrames,
+      ),
+    );
+    return true;
+  }
+
+  return false;
 }
 
 /// Whether every keyframe's `s` is a plain list of numbers — the shape
@@ -156,19 +223,54 @@ bool _numericKeyframes(List<dynamic> keyframes) {
 
 /// Bakes one animated property with a `loopOut`/`loopIn` expression.
 /// Returns the number of extra loops written.
+///
+/// [durationFrames], when given (for `loopOutDuration`/`loopInDuration`),
+/// replaces the natural keyframe-implied period with a fixed one: the
+/// repeating "segment" becomes the last (forward) or first (backward)
+/// [durationFrames] worth of time relative to the boundary keyframe, padded
+/// with a flat hold back to a synthetic cut point wherever that span
+/// extends past the actual keyframed range (which is the only case this
+/// supports — see [_walk]'s feasibility check).
 int _bakeProperty(
   Map<String, dynamic> prop,
   num start,
   num end, {
   required bool forward,
   required String mode,
+  num? durationFrames,
 }) {
-  final keyframes = (prop['k'] as List).cast<Map<String, dynamic>>();
+  var keyframes = (prop['k'] as List).cast<Map<String, dynamic>>();
   prop.remove('x');
 
-  final t0 = keyframes.first['t'] as num;
-  final period = (keyframes.last['t'] as num) - t0;
+  var t0 = keyframes.first['t'] as num;
+  final tEnd = keyframes.last['t'] as num;
+  var period = tEnd - t0;
   if (period <= 0) return 0;
+
+  if (durationFrames != null) {
+    period = durationFrames;
+    // A segment's easing pair (`i`/`o`) both live on the keyframe where that
+    // segment *starts* (confirmed by real Bodymovin exports: a terminal
+    // keyframe with no outgoing segment carries neither field). So the new
+    // synthetic hold segment gets its own self-contained linear `i`/`o`
+    // pair, and the existing keyframe it attaches to — which already fully
+    // describes its own original segment — is left completely untouched.
+    if (forward) {
+      final cut = tEnd - durationFrames;
+      keyframes = [
+        {'t': cut, 's': keyframes.first['s'], 'i': _linearIn, 'o': _linearOut},
+        ...keyframes,
+      ];
+      t0 = cut;
+    } else {
+      final cut = t0 + durationFrames;
+      keyframes = [
+        ...keyframes.sublist(0, keyframes.length - 1),
+        {...keyframes.last, 'i': _linearIn, 'o': _linearOut},
+        {'t': cut, 's': keyframes.last['s']},
+      ];
+    }
+  }
 
   switch (mode) {
     case 'continue':
@@ -180,18 +282,27 @@ int _bakeProperty(
           ? _bakeOffsetForward(prop, keyframes, t0, period, end)
           : _bakeOffsetBackward(prop, keyframes, t0, period, start);
     case 'pingpong':
-      return _bakeCycleForward(
-        prop,
-        keyframes,
-        t0,
-        period,
-        end,
-        pingpong: true,
-      );
+      return forward
+          ? _bakeCycleForward(prop, keyframes, t0, period, end, pingpong: true)
+          : _bakeBackwardCycle(
+              prop,
+              keyframes,
+              t0,
+              period,
+              start,
+              pingpong: true,
+            );
     default: // 'cycle'
       return forward
           ? _bakeCycleForward(prop, keyframes, t0, period, end, pingpong: false)
-          : _bakeBackwardCycle(prop, keyframes, t0, period, start);
+          : _bakeBackwardCycle(
+              prop,
+              keyframes,
+              t0,
+              period,
+              start,
+              pingpong: false,
+            );
   }
 }
 
@@ -246,32 +357,40 @@ int _bakeCycleForward(
 /// Each backward tile writes its own leading edge (so, unlike the forward
 /// case, no extra keyframe is needed to close off the last tile — it's
 /// already the array's first element, and `lottie` holds a property's value
-/// for any time before its first keyframe). `loopIn('pingpong')` isn't
-/// supported: the mirrored/alternating segment used for `loopOut('pingpong')`
-/// doesn't carry over cleanly to tiling backward, so that case is reported
-/// via [BakeResult.skippedExpressions] instead of reaching this function.
+/// for any time before its first keyframe). For `pingpong`, the tile
+/// immediately before `t0` is the mirrored segment (its last value, at
+/// `t0`, then matches the recorded segment's first value), alternating with
+/// the plain forward shape further back — the same alternation
+/// `_bakeCycleForward` does going forward, just phase-shifted by one since
+/// tiling starts adjacent to `t0` instead of at it.
 int _bakeBackwardCycle(
   Map<String, dynamic> prop,
   List<Map<String, dynamic>> keyframes,
   num t0,
   num period,
-  num start,
-) {
+  num start, {
+  required bool pingpong,
+}) {
   final segForward = [
     for (final kf in keyframes) {...kf, 't': (kf['t'] as num) - t0},
   ];
-  final closed = _jsonEquals(segForward.first['s'], segForward.last['s']);
+  // reverseSegment recomputes its own relative timing from the original
+  // (non-shifted) keyframes, so it must receive `keyframes`, not `segForward`.
+  final segBackward = pingpong ? _reverseSegment(keyframes) : segForward;
+  final closed =
+      pingpong || _jsonEquals(segForward.first['s'], segForward.last['s']);
 
   final chunks = <List<Map<String, dynamic>>>[];
   var rep = 0;
   while (t0 - rep * period > start) {
+    final segment = (pingpong && rep.isEven) ? segBackward : segForward;
     final leftEdge = t0 - (rep + 1) * period;
     final chunk = <Map<String, dynamic>>[
-      for (var i = 0; i < segForward.length - 1; i++)
-        {...segForward[i], 't': leftEdge + (segForward[i]['t'] as num)},
+      for (var i = 0; i < segment.length - 1; i++)
+        {...segment[i], 't': leftEdge + (segment[i]['t'] as num)},
     ];
     if (!closed) {
-      chunk.add({...segForward.last, 't': (t0 - rep * period) - loopGap});
+      chunk.add({...segment.last, 't': (t0 - rep * period) - loopGap});
     }
     chunks.add(chunk);
     rep += 1;
@@ -461,8 +580,16 @@ List<Map<String, dynamic>> _reverseSegment(
     };
     final j = n - 2 - i;
     if (j >= 0) {
-      kf['o'] = _mirrorEasing(keyframes[j]['i'] as Map<String, dynamic>);
-      kf['i'] = _mirrorEasing(keyframes[j]['o'] as Map<String, dynamic>);
+      // A keyframe missing 'i'/'o' (no easing recorded — effectively
+      // linear) isn't something real AE exports normally do, but isn't
+      // invalid either; fall back to the same linear default used
+      // elsewhere in this file rather than crashing on the null cast.
+      kf['o'] = _mirrorEasing(
+        keyframes[j]['i'] as Map<String, dynamic>? ?? _linearIn,
+      );
+      kf['i'] = _mirrorEasing(
+        keyframes[j]['o'] as Map<String, dynamic>? ?? _linearOut,
+      );
       if (keyframes[j].containsKey('ti')) {
         kf['to'] = keyframes[j]['ti'];
         kf['ti'] = keyframes[j]['to'];

@@ -6,8 +6,9 @@ import 'fix.dart';
 
 /// A [LottieDecoder] that runs [fix] on the bytes before parsing, so a raw
 /// After Effects/Bodymovin export — one that still has audio layers, empty
-/// precomps, or a `loopOut()`/`loopIn()` expression — renders correctly
-/// without a separate build-time bake step.
+/// precomps, or an expression `lottie` won't execute (`loopOut()`/
+/// `loopIn()`, `wiggle()`, `random()`, `time`-based motion, a cross-layer
+/// link) — renders correctly without a separate build-time bake step.
 ///
 /// Pass it to any `lottie` loading API that accepts a `decoder`:
 ///
