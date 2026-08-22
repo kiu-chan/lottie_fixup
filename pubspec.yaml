@@ -6,9 +6,9 @@ description: >-
   expressions that Lottie can't execute. Includes a drop-in LottieDecoder to
   fix files at load time, with no separate build step.
 version: 0.1.0
-homepage: https://github.com/TODO/lottie_fixup
-repository: https://github.com/TODO/lottie_fixup
-issue_tracker: https://github.com/TODO/lottie_fixup/issues
+homepage: https://github.com/kiu-chan/lottie_fixup
+repository: https://github.com/kiu-chan/lottie_fixup
+issue_tracker: https://github.com/kiu-chan/lottie_fixup/issues
 topics:
   - lottie
   - animation
@@ -16,8 +16,10 @@ topics:
   - cli
 
 environment:
-  sdk: ^3.6.0
-  flutter: '>=3.13.0'
+  # Khớp mức tối thiểu mà `lottie` (dependency bắt buộc) đòi hỏi — thấp hơn
+  # thì pub không thể resolve được lottie_fixup trên máy đó ngay từ đầu.
+  sdk: ^3.12.0
+  flutter: '>=3.44.0'
 
 dependencies:
   flutter:
