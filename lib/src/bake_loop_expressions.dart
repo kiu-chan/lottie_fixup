@@ -15,9 +15,12 @@
 /// values themselves.
 ///
 /// Not supported (left untouched, reported via [BakeResult.skippedExpressions]):
-/// `loopIn('pingpong')`, `'offset'`/`'continue'` on a non-numeric value, and
-/// any expression that calls both `loopIn` and `loopOut` on the same
-/// property.
+/// `loopIn('pingpong')`, `'offset'`/`'continue'` on a non-numeric value, any
+/// expression that calls both `loopIn` and `loopOut` on the same property,
+/// and any expression (loop-related or not, e.g. `wiggle`/`random`) on a
+/// property that was never manually keyframed (`"a": 0`) — there's nothing
+/// to repeat since it has no keyframes at all, scalar (`r`, `o`) or
+/// multi-dimensional (`p`, `s`, `a`) alike.
 library;
 
 /// Gap (in frames) left between the end of one loop and the start of the
@@ -95,29 +98,40 @@ void _walk(
   if (node is Map<String, dynamic>) {
     final expr = node['x'];
     final k = node['k'];
-    if (expr is String && k is List) {
-      final matches = _loopCall.allMatches(expr).toList();
-      // Anything other than exactly one loopIn/loopOut call — none (not a
-      // loop expression at all), or two (loopIn and loopOut combined on the
-      // same property) — isn't safe to bake automatically.
-      if (matches.length == 1) {
-        final forward = matches.single.group(1) == 'Out';
-        final mode = matches.single.group(2) ?? 'cycle';
-        final supported = switch (mode) {
-          'cycle' => true,
-          'pingpong' => forward,
-          'offset' || 'continue' => _numericKeyframes(k),
-          _ => false,
-        };
-        if (supported) {
-          loopCounts.add(
-            _bakeProperty(node, start, end, forward: forward, mode: mode),
-          );
+    if (expr is String) {
+      // Baking needs real keyframes to repeat: a property with `"a": 0`
+      // (never manually animated) stores its value directly in `k` instead
+      // — a plain number for a scalar property (rotation, opacity) or a
+      // plain list of numbers for a multi-dimensional one (position, scale)
+      // — so it can't be baked no matter the expression. Only `k` shaped as
+      // a list of keyframe objects (`"a": 1`) is eligible.
+      final keyframed = k is List && k.isNotEmpty && k.every((kf) => kf is Map);
+      if (!keyframed) {
+        skipped.add(expr);
+      } else {
+        final matches = _loopCall.allMatches(expr).toList();
+        // Anything other than exactly one loopIn/loopOut call — none (not a
+        // loop expression at all), or two (loopIn and loopOut combined on
+        // the same property) — isn't safe to bake automatically.
+        if (matches.length == 1) {
+          final forward = matches.single.group(1) == 'Out';
+          final mode = matches.single.group(2) ?? 'cycle';
+          final supported = switch (mode) {
+            'cycle' => true,
+            'pingpong' => forward,
+            'offset' || 'continue' => _numericKeyframes(k),
+            _ => false,
+          };
+          if (supported) {
+            loopCounts.add(
+              _bakeProperty(node, start, end, forward: forward, mode: mode),
+            );
+          } else {
+            skipped.add(expr);
+          }
         } else {
           skipped.add(expr);
         }
-      } else {
-        skipped.add(expr);
       }
     }
     for (final value in node.values.toList()) {

@@ -434,6 +434,56 @@ void main() {
       expect(prop['x'], 'wiggle(2, 10)'); // untouched
     });
 
+    test('a scalar property never manually keyframed ("a": 0, "k": <num>) with '
+        'an expression is reported, not silently ignored', () {
+      // Mirrors bodymovin's export for e.g. opacity/rotation with an
+      // expression but no keyframes: "k" is a raw number, not a list.
+      final prop = {'x': 'random(50, 100)', 'k': 100};
+      final doc = {'op': 60, 'nested': prop};
+
+      final result = bakeLoopExpressions(doc);
+
+      expect(result.propertiesBaked, 0);
+      expect(result.skippedExpressions, ['random(50, 100)']);
+      expect(prop['x'], 'random(50, 100)'); // untouched
+      expect(prop['k'], 100); // untouched
+    });
+
+    test(
+      'a multi-dimensional property never manually keyframed ("a": 0, "k": '
+      '[x, y, z]") with an expression is reported, not treated as keyframes',
+      () {
+        // Mirrors bodymovin's export for e.g. position with an expression
+        // but no keyframes: "k" is a raw numeric list, not a keyframe list.
+        final prop = {
+          'x': 'wiggle(2, 40)',
+          'k': [100, 100, 0],
+        };
+        final doc = {'op': 60, 'nested': prop};
+
+        final result = bakeLoopExpressions(doc);
+
+        expect(result.propertiesBaked, 0);
+        expect(result.skippedExpressions, ['wiggle(2, 40)']);
+        expect(prop['x'], 'wiggle(2, 40)'); // untouched
+        expect(prop['k'], [100, 100, 0]); // untouched
+      },
+    );
+
+    test("loopOut('cycle') on a never-keyframed property is reported instead "
+        'of crashing on the raw (non-keyframe) value', () {
+      final prop = {
+        'x': "loopOut('cycle')",
+        'k': [100, 100, 0],
+      };
+      final doc = {'op': 60, 'nested': prop};
+
+      final result = bakeLoopExpressions(doc);
+
+      expect(result.propertiesBaked, 0);
+      expect(result.skippedExpressions, ["loopOut('cycle')"]);
+    });
+
     test('is a no-op on an already-baked document', () {
       final prop = _property([
         {

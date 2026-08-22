@@ -1,5 +1,18 @@
 ## Unreleased
 
+- `bakeLoopExpressions` (fix): expressions on a scalar property that was
+  never manually keyframed (`"a": 0`, e.g. rotation or opacity with a
+  `random()`/`loopOut()` expression but no keyframes) are no longer silently
+  invisible to both `diagnose` and `fix`. The detection only checked
+  `k is List`, which holds for a keyframe array (`"a": 1`) but also — wrongly
+  — for a non-animated multi-dimensional property's raw `[x, y, z]` value; a
+  non-animated scalar property's raw `k` (a plain number) failed the check
+  and skipped detection entirely, rather than being reported via
+  `skippedExpressions` like every other unsupported case. Detection now
+  checks that `k` is actually a list of keyframe objects, which also
+  prevents attempting to bake a `loopOut`/`loopIn` call found on a
+  non-animated multi-dimensional property (previously would have crashed
+  doing keyframe arithmetic on raw numbers).
 - `bakeLoopExpressions`: `loopIn('cycle')` is now detected and baked (tiling
   the segment backward from its first keyframe down to `doc['ip']`) —
   previously only `loopOut` was recognized at all, so a property using
