@@ -27,18 +27,18 @@ class Diagnosis {
   /// `loopInDuration` expression that `fix` can bake into real keyframes.
   final int loopExpressionsToBake;
 
-  /// Never-keyframed properties with a cross-layer link, `time`-based, or
-  /// `random`/`wiggle` expression that `fix` can bake (see
+  /// Properties (never-keyframed or already-keyframed) with a non-loop
+  /// expression that `fix` can bake — cross-layer links, `time`-based
+  /// motion, `if`/`else`, `Math.*`, `random`/`wiggle`, etc. (see
   /// `bakePropertyExpressions`).
   final int propertyExpressionsToBake;
 
   /// Expressions found that `fix` will leave untouched: an unsupported loop
   /// mode/shape (e.g. a duration variant shorter than the keyframed
-  /// segment, or an expression combining both `loopIn` and `loopOut`), an
-  /// expression on an already-keyframed property that isn't a loop call
-  /// (e.g. `wiggle` on a property with real keyframes, not just `"a": 0`),
-  /// or syntax this package's expression evaluator doesn't understand
-  /// (nested comps, `effect(...)`, etc.).
+  /// segment, or an expression combining both `loopIn` and `loopOut`), a
+  /// non-`wiggle()` expression on a shape path, or syntax this package's
+  /// expression evaluator doesn't understand (nested comps, `effect(...)`,
+  /// etc.).
   final List<String> unsupportedExpressions;
 
   bool get hasIssues =>

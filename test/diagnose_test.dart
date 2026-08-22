@@ -45,7 +45,8 @@ void main() {
       },
     );
 
-    test('reports unsupported expressions without baking them', () {
+    test('reports a wiggle() layered on real keyframes as bakeable, not '
+        'unsupported', () {
       final doc = {
         'op': 24,
         'layers': [
@@ -73,7 +74,29 @@ void main() {
 
       expect(report.hasIssues, isTrue);
       expect(report.loopExpressionsToBake, 0);
-      expect(report.unsupportedExpressions, ['wiggle(2, 10)']);
+      expect(report.propertyExpressionsToBake, 1);
+      expect(report.unsupportedExpressions, isEmpty);
+    });
+
+    test('reports a truly unsupported expression without baking it', () {
+      final doc = {
+        'op': 24,
+        'layers': [
+          {
+            'ty': 4,
+            'ks': {'x': 'effect("Slider Control")("Slider")', 'k': 100},
+          },
+        ],
+      };
+      final raw = jsonEncode(doc);
+
+      final report = diagnose(raw, doc);
+
+      expect(report.hasIssues, isTrue);
+      expect(report.propertyExpressionsToBake, 0);
+      expect(report.unsupportedExpressions, [
+        'effect("Slider Control")("Slider")',
+      ]);
     });
 
     test('does not mutate the caller-provided doc', () {

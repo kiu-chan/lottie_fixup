@@ -1,12 +1,17 @@
-/// A small evaluator for the tiny subset of After Effects/Bodymovin
-/// expression syntax that [bakePropertyExpressions] needs to sample:
-/// numeric arithmetic, `time`, `thisComp.layer('Name').transform.<prop>`
-/// cross-layer references, and the `random`/`wiggle` builtins.
+/// A small interpreter for the subset of After Effects/Bodymovin expression
+/// syntax that [bakePropertyExpressions] needs to sample: numeric arithmetic,
+/// comparisons/booleans, `if`/`else`, local `var` bindings, `time`,
+/// `thisComp.layer('Name').transform.<prop>` cross-layer references (plus
+/// `.valueAtTime(t)`), the `Math.*` namespace, `value` (the property's own
+/// pre-expression value), array literals, and the `random`/`wiggle`/
+/// `linear`/`ease`/`easeIn`/`easeOut`/`clamp`/`add`/`sub`/`mul`/`div`/
+/// `posterizeTime`/`seedRandom` builtins.
 ///
-/// This is deliberately not a general JavaScript interpreter — no `if`,
-/// loops, or user-defined functions — just enough grammar to cover the
-/// value-producing expression Bodymovin emits after its own
-/// `var $bm_rt; $bm_rt = <expr>;` boilerplate.
+/// This is deliberately not a general JavaScript interpreter — no loops or
+/// user-defined functions — just enough grammar to cover the statement
+/// sequences Bodymovin emits after its own `var $bm_rt; ...; $bm_rt = <expr>;`
+/// boilerplate, including any control-flow/helper statements that precede the
+/// final assignment (e.g. `posterizeTime(6);`).
 library;
 
 import 'dart:math';
@@ -22,35 +27,7 @@ class ExpressionEvalError implements Exception {
   String toString() => 'ExpressionEvalError: $message';
 }
 
-/// Extracts the value-producing expression from a raw `x` string, stripping
-/// Bodymovin's `var $bm_rt;` boilerplate and taking the right-hand side of
-/// the last assignment to `$bm_rt` (or, if there is none, the last bare
-/// expression statement — matching how AE/Bodymovin's implicit "last value
-/// wins" evaluation works). Returns null if nothing usable is found.
-String? extractValueExpression(String raw) {
-  final statements = raw
-      .split(';')
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toList();
-  final assignment = RegExp(r'^([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(.+)$');
-
-  String? lastValue;
-  String? bmRtValue;
-  for (final statement in statements) {
-    if (statement.startsWith('var ')) continue;
-    final match = assignment.firstMatch(statement);
-    if (match != null) {
-      lastValue = match.group(2);
-      if (match.group(1) == r'$bm_rt') bmRtValue = lastValue;
-    } else {
-      lastValue = statement;
-    }
-  }
-  return bmRtValue ?? lastValue;
-}
-
-// --- AST -------------------------------------------------------------------
+// --- Expression AST ---------------------------------------------------------
 
 sealed class ExprNode {}
 
@@ -69,16 +46,43 @@ class IdentNode extends ExprNode {
   final String name;
 }
 
+class ArrayNode extends ExprNode {
+  ArrayNode(this.elements);
+  final List<ExprNode> elements;
+}
+
 class UnaryNode extends ExprNode {
-  UnaryNode(this.operand);
+  UnaryNode(this.op, this.operand);
+  final String op; // '-' or '!'
   final ExprNode operand;
 }
 
 class BinaryNode extends ExprNode {
   BinaryNode(this.op, this.left, this.right);
-  final String op;
+  final String op; // '+','-','*','/','%'
   final ExprNode left;
   final ExprNode right;
+}
+
+class CompareNode extends ExprNode {
+  CompareNode(this.op, this.left, this.right);
+  final String op; // '<','>','<=','>=','==','!='
+  final ExprNode left;
+  final ExprNode right;
+}
+
+class LogicalNode extends ExprNode {
+  LogicalNode(this.op, this.left, this.right);
+  final String op; // '&&' or '||'
+  final ExprNode left;
+  final ExprNode right;
+}
+
+class TernaryNode extends ExprNode {
+  TernaryNode(this.cond, this.thenExpr, this.elseExpr);
+  final ExprNode cond;
+  final ExprNode thenExpr;
+  final ExprNode elseExpr;
 }
 
 class MemberNode extends ExprNode {
@@ -97,6 +101,44 @@ class IndexNode extends ExprNode {
   IndexNode(this.target, this.index);
   final ExprNode target;
   final ExprNode index;
+}
+
+// --- Statement AST -----------------------------------------------------------
+
+sealed class StmtNode {}
+
+/// `var name;` or `var name = <init>;`.
+class VarDeclStmt extends StmtNode {
+  VarDeclStmt(this.name, this.init);
+  final String name;
+  final ExprNode? init;
+}
+
+/// `name = <value>;` — reassignment of a local variable or `$bm_rt`.
+class AssignStmt extends StmtNode {
+  AssignStmt(this.name, this.value);
+  final String name;
+  final ExprNode value;
+}
+
+/// A bare expression statement, e.g. `posterizeTime(6);` or (with no `$bm_rt`
+/// wrapper at all) the entire body of a one-line expression like `time * 180`.
+class ExprStmt extends StmtNode {
+  ExprStmt(this.expr);
+  final ExprNode expr;
+}
+
+class IfStmt extends StmtNode {
+  IfStmt(this.cond, this.thenBranch, this.elseBranch);
+  final ExprNode cond;
+  final List<StmtNode> thenBranch;
+  final List<StmtNode>? elseBranch;
+}
+
+/// A standalone `{ ... }` block (not attached to an `if`).
+class GroupStmt extends StmtNode {
+  GroupStmt(this.body);
+  final List<StmtNode> body;
 }
 
 // --- Tokenizer ---------------------------------------------------------
@@ -137,7 +179,24 @@ List<_Token> _tokenize(String src) {
       }
       tokens.add(_Token('str', src.substring(start, i)));
       i++; // closing quote
-    } else if ('+-*/().,[]'.contains(c)) {
+    } else if (c == '<' || c == '>' || c == '=' || c == '!') {
+      final two = i + 1 < src.length ? src.substring(i, i + 2) : '';
+      if (two == '<=' || two == '>=' || two == '==' || two == '!=') {
+        tokens.add(_Token('punct', two));
+        i += 2;
+      } else {
+        tokens.add(_Token('punct', c));
+        i++;
+      }
+    } else if (c == '&' || c == '|') {
+      final two = i + 1 < src.length ? src.substring(i, i + 2) : '';
+      if (two == '&&' || two == '||') {
+        tokens.add(_Token('punct', two));
+        i += 2;
+      } else {
+        throw ExpressionEvalError('unexpected character "$c"');
+      }
+    } else if ('+-*/%().,[]{};?:'.contains(c)) {
       tokens.add(_Token('punct', c));
       i++;
     } else {
@@ -148,13 +207,29 @@ List<_Token> _tokenize(String src) {
   return tokens;
 }
 
+const _reservedWords = {'var', 'if', 'else'};
+
 // --- Parser --------------------------------------------------------------
 //
-// expr    := term (('+'|'-') term)*
-// term    := unary (('*'|'/') unary)*
-// unary   := '-' unary | postfix
-// postfix := primary ( '.' ident | '(' args ')' | '[' expr ']' )*
-// primary := num | str | ident | '(' expr ')'
+// program    := statement*
+// statement  := varDecl | ifStmt | block | assign | exprStmt
+// varDecl    := 'var' ident ('=' expr)? ';'?
+// ifStmt     := 'if' '(' expr ')' (block | statement) ('else' (block | statement))?
+// block      := '{' statement* '}'
+// assign     := ident '=' expr ';'?
+// exprStmt   := expr ';'?
+//
+// expr       := ternary
+// ternary    := logicalOr ('?' expr ':' expr)?
+// logicalOr  := logicalAnd ('||' logicalAnd)*
+// logicalAnd := equality ('&&' equality)*
+// equality   := relational (('=='|'!=') relational)*
+// relational := additive (('<'|'>'|'<='|'>=') additive)*
+// additive   := term (('+'|'-') term)*
+// term       := unary (('*'|'/'|'%') unary)*
+// unary      := ('-'|'!') unary | postfix
+// postfix    := primary ( '.' ident | '(' args ')' | '[' expr ']' )*
+// primary    := num | str | ident | '(' expr ')' | '[' (expr (',' expr)*)? ']'
 
 class _Parser {
   _Parser(this._tokens);
@@ -163,14 +238,12 @@ class _Parser {
 
   _Token get _current => _tokens[_pos];
 
-  ExprNode parse() {
-    final node = _expr();
-    if (_current.type != 'end') {
-      throw ExpressionEvalError(
-        'unexpected trailing input near "${_current.text}"',
-      );
+  List<StmtNode> parseProgram() {
+    final stmts = <StmtNode>[];
+    while (_current.type != 'end') {
+      stmts.add(_statement());
     }
-    return node;
+    return stmts;
   }
 
   _Token _expect(String type, [String? text]) {
@@ -187,7 +260,129 @@ class _Parser {
   bool _isPunct(String text) =>
       _current.type == 'punct' && _current.text == text;
 
-  ExprNode _expr() {
+  bool _isKeyword(String text) =>
+      _current.type == 'ident' && _current.text == text;
+
+  void _consumeOptionalSemi() {
+    if (_isPunct(';')) _pos++;
+  }
+
+  StmtNode _statement() {
+    if (_isKeyword('var')) {
+      _pos++;
+      final name = _expect('ident').text;
+      ExprNode? init;
+      if (_isPunct('=')) {
+        _pos++;
+        init = _expr();
+      }
+      _consumeOptionalSemi();
+      return VarDeclStmt(name, init);
+    }
+    if (_isKeyword('if')) {
+      _pos++;
+      _expect('punct', '(');
+      final cond = _expr();
+      _expect('punct', ')');
+      final thenBranch = _blockOrSingle();
+      List<StmtNode>? elseBranch;
+      if (_isKeyword('else')) {
+        _pos++;
+        elseBranch = _blockOrSingle();
+      }
+      return IfStmt(cond, thenBranch, elseBranch);
+    }
+    if (_isPunct('{')) {
+      return GroupStmt(_block());
+    }
+    if (_current.type == 'ident' && !_reservedWords.contains(_current.text)) {
+      final savedPos = _pos;
+      final name = _current.text;
+      _pos++;
+      if (_isPunct('=')) {
+        _pos++;
+        final value = _expr();
+        _consumeOptionalSemi();
+        return AssignStmt(name, value);
+      }
+      _pos = savedPos;
+    }
+    final expr = _expr();
+    _consumeOptionalSemi();
+    return ExprStmt(expr);
+  }
+
+  List<StmtNode> _blockOrSingle() {
+    if (_isPunct('{')) return _block();
+    return [_statement()];
+  }
+
+  List<StmtNode> _block() {
+    _expect('punct', '{');
+    final stmts = <StmtNode>[];
+    while (!_isPunct('}')) {
+      if (_current.type == 'end') {
+        throw ExpressionEvalError('unterminated block');
+      }
+      stmts.add(_statement());
+    }
+    _pos++; // consume '}'
+    return stmts;
+  }
+
+  ExprNode _expr() => _ternary();
+
+  ExprNode _ternary() {
+    final cond = _logicalOr();
+    if (_isPunct('?')) {
+      _pos++;
+      final thenExpr = _expr();
+      _expect('punct', ':');
+      final elseExpr = _expr();
+      return TernaryNode(cond, thenExpr, elseExpr);
+    }
+    return cond;
+  }
+
+  ExprNode _logicalOr() {
+    var node = _logicalAnd();
+    while (_isPunct('||')) {
+      _pos++;
+      node = LogicalNode('||', node, _logicalAnd());
+    }
+    return node;
+  }
+
+  ExprNode _logicalAnd() {
+    var node = _equality();
+    while (_isPunct('&&')) {
+      _pos++;
+      node = LogicalNode('&&', node, _equality());
+    }
+    return node;
+  }
+
+  ExprNode _equality() {
+    var node = _relational();
+    while (_isPunct('==') || _isPunct('!=')) {
+      final op = _current.text;
+      _pos++;
+      node = CompareNode(op, node, _relational());
+    }
+    return node;
+  }
+
+  ExprNode _relational() {
+    var node = _additive();
+    while (_isPunct('<') || _isPunct('>') || _isPunct('<=') || _isPunct('>=')) {
+      final op = _current.text;
+      _pos++;
+      node = CompareNode(op, node, _additive());
+    }
+    return node;
+  }
+
+  ExprNode _additive() {
     var node = _term();
     while (_isPunct('+') || _isPunct('-')) {
       final op = _current.text;
@@ -199,7 +394,7 @@ class _Parser {
 
   ExprNode _term() {
     var node = _unary();
-    while (_isPunct('*') || _isPunct('/')) {
+    while (_isPunct('*') || _isPunct('/') || _isPunct('%')) {
       final op = _current.text;
       _pos++;
       node = BinaryNode(op, node, _unary());
@@ -208,9 +403,10 @@ class _Parser {
   }
 
   ExprNode _unary() {
-    if (_isPunct('-')) {
+    if (_isPunct('-') || _isPunct('!')) {
+      final op = _current.text;
       _pos++;
-      return UnaryNode(_unary());
+      return UnaryNode(op, _unary());
     }
     return _postfix();
   }
@@ -268,13 +464,28 @@ class _Parser {
       _expect('punct', ')');
       return node;
     }
+    if (_isPunct('[')) {
+      _pos++;
+      final elements = <ExprNode>[];
+      if (!_isPunct(']')) {
+        elements.add(_expr());
+        while (_isPunct(',')) {
+          _pos++;
+          elements.add(_expr());
+        }
+      }
+      _expect('punct', ']');
+      return ArrayNode(elements);
+    }
     throw ExpressionEvalError('unexpected token "${_current.text}"');
   }
 }
 
-/// Parses [source] (already stripped of the `var $bm_rt;` wrapper via
-/// [extractValueExpression]) into an [ExprNode] tree.
-ExprNode parseExpression(String source) => _Parser(_tokenize(source)).parse();
+/// Parses the full raw `x` expression body (already including any
+/// `var $bm_rt;`/control-flow/helper statements) into a sequence of
+/// statements, ready for [runProgram].
+List<StmtNode> parseProgram(String source) =>
+    _Parser(_tokenize(source)).parseProgram();
 
 // --- Evaluation context ---------------------------------------------------
 
@@ -282,6 +493,12 @@ ExprNode parseExpression(String source) => _Parser(_tokenize(source)).parse();
 /// the target of a `.layer(...)` call.
 class ThisCompRef {
   const ThisCompRef();
+}
+
+/// Marks a resolved `Math` reference during evaluation. Only valid as the
+/// target of a `Math.<const>` member access or `Math.<fn>(...)` call.
+class MathRef {
+  const MathRef();
 }
 
 /// A layer resolved via `thisComp.layer(...)`, scoped to the same `layers`
@@ -299,6 +516,15 @@ class TransformRef {
   final Map<String, dynamic> ks;
 }
 
+/// A resolved-but-not-yet-sampled reference to a raw Lottie property map
+/// (`<layerRef>.transform.position`, etc.). Kept lazy so `.valueAtTime(t)`
+/// can sample it at an arbitrary time; anywhere else it's consumed, it's
+/// forced to a concrete value at the context's current time.
+class PropertyRef {
+  PropertyRef(this.prop);
+  final Map<String, dynamic> prop;
+}
+
 const _transformAliasToKey = {
   'position': 'p',
   'rotation': 'r',
@@ -307,7 +533,7 @@ const _transformAliasToKey = {
   'anchorPoint': 'a',
 };
 
-/// Per-property evaluation state: everything [evaluate] needs to resolve
+/// Per-property evaluation state: everything [runProgram] needs to resolve
 /// `time`, cross-layer references, and the `random`/`wiggle` builtins for
 /// one sampling pass. Reused across every frame sampled for the same
 /// property so `random`/`wiggle` advance deterministically frame-by-frame.
@@ -332,18 +558,33 @@ class EvalContext {
   /// like rotation/opacity, otherwise the length of its vector).
   final int targetDims;
 
-  /// The property's original (pre-bake) static value, broadcast to
-  /// [targetDims] components — the center that `wiggle()` jitters around.
-  final List<num> baseValue;
+  /// The property's own pre-expression value at the current frame,
+  /// broadcast to [targetDims] components — the center that `wiggle()`
+  /// jitters around and what the `value` identifier resolves to. Constant
+  /// for a never-keyframed property; updated per-frame by the caller when
+  /// the property already has real keyframes (an expression layered on top
+  /// of them samples the original curve, matching how After Effects treats
+  /// `value`).
+  List<num> baseValue;
+
+  /// Set by a `posterizeTime(fps)` call during the current run; quantizes
+  /// [timeSeconds] to `fps` steps/second for the remainder of that run.
+  /// Reset to null at the start of every [runProgram] call.
+  num? posterizeFps;
 
   final Random _rng;
   final Map<int, List<num>> _wiggleKnots = {};
 
   /// Current sample time in frames; set by the caller before each
-  /// [evaluate] call.
+  /// [runProgram] call.
   num timeFrame = 0;
 
-  num get timeSeconds => timeFrame / fr;
+  num get timeSeconds {
+    final raw = timeFrame / fr;
+    final fps = posterizeFps;
+    if (fps == null || fps <= 0) return raw;
+    return (raw * fps).floorToDouble() / fps;
+  }
 }
 
 /// Finds a layer in [layers] by name (`nm`) or 1-based index (`ind`, AE's
@@ -405,6 +646,42 @@ num _asNum(dynamic v) {
   throw ExpressionEvalError('expected a number, got $v');
 }
 
+bool _truthy(dynamic v) {
+  if (v is bool) return v;
+  if (v is num) return v != 0;
+  if (v is String) return v.isNotEmpty;
+  if (v is List) return v.isNotEmpty;
+  return v != null;
+}
+
+bool _valueEquals(dynamic l, dynamic r) {
+  if (l is List && r is List) {
+    if (l.length != r.length) return false;
+    for (var i = 0; i < l.length; i++) {
+      if (!_valueEquals(l[i], r[i])) return false;
+    }
+    return true;
+  }
+  return l == r;
+}
+
+bool _compare(String op, dynamic l, dynamic r) {
+  if (l is num && r is num) {
+    return switch (op) {
+      '<' => l < r,
+      '>' => l > r,
+      '<=' => l <= r,
+      '>=' => l >= r,
+      '==' => l == r,
+      '!=' => l != r,
+      _ => throw ExpressionEvalError('unknown comparison operator "$op"'),
+    };
+  }
+  if (op == '==') return _valueEquals(l, r);
+  if (op == '!=') return !_valueEquals(l, r);
+  throw ExpressionEvalError('cannot compare these operand types with "$op"');
+}
+
 dynamic _applyBinary(String op, dynamic l, dynamic r) {
   if (l is num && r is num) {
     return switch (op) {
@@ -412,7 +689,8 @@ dynamic _applyBinary(String op, dynamic l, dynamic r) {
       '-' => l - r,
       '*' => l * r,
       '/' => l / r,
-      _ => throw ExpressionEvalError('unknown operator $op'),
+      '%' => l % r,
+      _ => throw ExpressionEvalError('unknown operator "$op"'),
     };
   }
   if (l is List<num> && r is List<num>) {
@@ -429,37 +707,178 @@ dynamic _applyBinary(String op, dynamic l, dynamic r) {
   if (l is num && r is List<num>) {
     return [for (final v in r) _applyBinary(op, l, v) as num];
   }
-  throw ExpressionEvalError('unsupported operand types for $op');
+  throw ExpressionEvalError('unsupported operand types for "$op"');
 }
 
-/// Evaluates [node] against [ctx]. Returns a `num`, `List<num>`, `String`,
-/// or one of [ThisCompRef]/[LayerRef]/[TransformRef] (only valid as an
-/// intermediate value in a member/call chain — reaching the top of
-/// evaluation with one of those left over is an error).
-dynamic evaluate(ExprNode node, EvalContext ctx) {
+dynamic _lerp(dynamic a, dynamic b, num f) {
+  if (a is num && b is num) return a + (b - a) * f;
+  if (a is List<num> && b is List<num>) {
+    if (a.length != b.length) {
+      throw ExpressionEvalError('vector length mismatch');
+    }
+    return [for (var i = 0; i < a.length; i++) a[i] + (b[i] - a[i]) * f];
+  }
+  throw ExpressionEvalError('mismatched operand shapes for interpolation');
+}
+
+/// `linear`/`ease`/`easeIn`/`easeOut`, either as `fn(t, val1, val2)` (t
+/// implicitly clamped to `[0, 1]`) or `fn(t, tMin, tMax, val1, val2)`. `ease`
+/// applies a smoothstep curve, `easeIn`/`easeOut` a quadratic one — an
+/// approximation of AE's bezier-based easing, not a bit-exact match (the same
+/// tradeoff this package already makes for `random`/`wiggle`).
+dynamic _interpolate(String kind, List<dynamic> args) {
+  final num t;
+  final num tMin;
+  final num tMax;
+  final dynamic v1;
+  final dynamic v2;
+  if (args.length == 3) {
+    t = _asNum(args[0]);
+    tMin = 0;
+    tMax = 1;
+    v1 = args[1];
+    v2 = args[2];
+  } else if (args.length == 5) {
+    t = _asNum(args[0]);
+    tMin = _asNum(args[1]);
+    tMax = _asNum(args[2]);
+    v1 = args[3];
+    v2 = args[4];
+  } else {
+    throw ExpressionEvalError('$kind() expects 3 or 5 arguments');
+  }
+  var f = tMax == tMin ? 1.0 : ((t - tMin) / (tMax - tMin));
+  f = f.clamp(0.0, 1.0);
+  f = switch (kind) {
+    'linear' => f,
+    'ease' => f * f * (3 - 2 * f),
+    'easeIn' => f * f,
+    'easeOut' => 1 - (1 - f) * (1 - f),
+    _ => throw ExpressionEvalError('unknown interpolation "$kind"'),
+  };
+  return _lerp(v1, v2, f);
+}
+
+dynamic _clamp(dynamic value, dynamic minV, dynamic maxV) {
+  num clampOne(num v, num lo, num hi) => v < lo ? lo : (v > hi ? hi : v);
+  if (value is num) return clampOne(value, _asNum(minV), _asNum(maxV));
+  if (value is List<num>) {
+    List<num> broadcast(dynamic v) =>
+        v is List<num> ? v : List<num>.filled(value.length, _asNum(v));
+    final lo = broadcast(minV);
+    final hi = broadcast(maxV);
+    return [
+      for (var i = 0; i < value.length; i++) clampOne(value[i], lo[i], hi[i]),
+    ];
+  }
+  throw ExpressionEvalError('clamp() expects a number or vector value');
+}
+
+num _callMath(String name, List<num> args) {
+  num arg(int i) => args[i];
+  return switch (name) {
+    'sin' => sin(arg(0)),
+    'cos' => cos(arg(0)),
+    'tan' => tan(arg(0)),
+    'asin' => asin(arg(0)),
+    'acos' => acos(arg(0)),
+    'atan' => atan(arg(0)),
+    'atan2' => atan2(arg(0), arg(1)),
+    'abs' => arg(0).abs(),
+    'sqrt' => sqrt(arg(0)),
+    'pow' => pow(arg(0), arg(1)),
+    'floor' => arg(0).floorToDouble(),
+    'ceil' => arg(0).ceilToDouble(),
+    'round' => arg(0).roundToDouble(),
+    'max' => args.reduce((a, b) => a > b ? a : b),
+    'min' => args.reduce((a, b) => a < b ? a : b),
+    'log' => log(arg(0)),
+    'exp' => exp(arg(0)),
+    _ => throw ExpressionEvalError('unsupported Math.$name(...)'),
+  };
+}
+
+/// Resolves a `PropertyRef` left over from a member-access chain into its
+/// concrete sampled value at the context's current frame. Every consumer of
+/// an evaluated expression forces its operands (arithmetic, comparisons,
+/// array elements, function arguments, final statement values) except the
+/// `.valueAtTime(t)` handler, which needs the still-lazy [PropertyRef] to
+/// sample it at a caller-chosen time instead.
+dynamic _force(dynamic v, EvalContext ctx) {
+  if (v is PropertyRef) return sampleRawProperty(v.prop, ctx.timeFrame);
+  return v;
+}
+
+/// Evaluates [node] against [ctx]/[vars]. Returns a `num`, `List<num>`,
+/// `String`, `bool`, or one of [ThisCompRef]/[MathRef]/[LayerRef]/
+/// [TransformRef]/[PropertyRef] (only valid as an intermediate value in a
+/// member/call chain — reaching a place that needs a concrete value with one
+/// of those left over is an error, [PropertyRef] excepted, which [_force]
+/// resolves on demand).
+dynamic _eval(ExprNode node, EvalContext ctx, Map<String, dynamic> vars) {
   switch (node) {
     case NumNode n:
       return n.value;
     case StrNode s:
       return s.value;
+    case ArrayNode a:
+      return [
+        for (final e in a.elements) _asNum(_force(_eval(e, ctx, vars), ctx)),
+      ];
     case IdentNode id:
-      if (id.name == 'time') return ctx.timeSeconds;
-      if (id.name == 'thisComp') return const ThisCompRef();
-      if (id.name == 'PI') return pi;
+      if (vars.containsKey(id.name)) return vars[id.name];
+      switch (id.name) {
+        case 'time':
+          return ctx.timeSeconds;
+        case 'thisComp':
+          return const ThisCompRef();
+        case 'Math':
+          return const MathRef();
+        case 'PI':
+          return pi;
+        case 'value':
+          return ctx.targetDims == 1
+              ? ctx.baseValue[0]
+              : List<num>.from(ctx.baseValue);
+        case 'true':
+          return true;
+        case 'false':
+          return false;
+      }
       throw ExpressionEvalError('unknown identifier "${id.name}"');
     case UnaryNode u:
-      return -_asNum(evaluate(u.operand, ctx));
+      final v = _force(_eval(u.operand, ctx, vars), ctx);
+      return u.op == '!' ? !_truthy(v) : -_asNum(v);
     case BinaryNode b:
-      return _applyBinary(b.op, evaluate(b.left, ctx), evaluate(b.right, ctx));
+      return _applyBinary(
+        b.op,
+        _force(_eval(b.left, ctx, vars), ctx),
+        _force(_eval(b.right, ctx, vars), ctx),
+      );
+    case CompareNode c:
+      return _compare(
+        c.op,
+        _force(_eval(c.left, ctx, vars), ctx),
+        _force(_eval(c.right, ctx, vars), ctx),
+      );
+    case LogicalNode l:
+      final left = _force(_eval(l.left, ctx, vars), ctx);
+      if (l.op == '&&') {
+        return _truthy(left) && _truthy(_force(_eval(l.right, ctx, vars), ctx));
+      }
+      return _truthy(left) || _truthy(_force(_eval(l.right, ctx, vars), ctx));
+    case TernaryNode t:
+      final cond = _truthy(_force(_eval(t.cond, ctx, vars), ctx));
+      return cond ? _eval(t.thenExpr, ctx, vars) : _eval(t.elseExpr, ctx, vars);
     case IndexNode ix:
-      final target = evaluate(ix.target, ctx);
-      final index = _asNum(evaluate(ix.index, ctx)).toInt();
+      final target = _force(_eval(ix.target, ctx, vars), ctx);
+      final index = _asNum(_force(_eval(ix.index, ctx, vars), ctx)).toInt();
       if (target is List) return target[index];
       throw ExpressionEvalError('cannot index a non-list value');
     case MemberNode m:
-      return _resolveMember(evaluate(m.target, ctx), m.name, ctx);
+      return _resolveMember(_eval(m.target, ctx, vars), m.name, ctx);
     case CallNode c:
-      return _resolveCall(c, ctx);
+      return _resolveCall(c, ctx, vars);
   }
 }
 
@@ -480,68 +899,213 @@ dynamic _resolveMember(dynamic target, String name, EvalContext ctx) {
     if (prop is! Map<String, dynamic>) {
       throw ExpressionEvalError('layer is missing transform.$name');
     }
-    return sampleRawProperty(prop, ctx.timeFrame);
+    return PropertyRef(prop);
+  }
+  if (target is MathRef) {
+    return switch (name) {
+      'PI' => pi,
+      'E' => e,
+      _ => throw ExpressionEvalError('unknown "Math.$name"'),
+    };
   }
   throw ExpressionEvalError('cannot access ".$name" on this value');
 }
 
-dynamic _resolveCall(CallNode call, EvalContext ctx) {
+dynamic _resolveCall(
+  CallNode call,
+  EvalContext ctx,
+  Map<String, dynamic> vars,
+) {
   final callee = call.callee;
-  if (callee is MemberNode && callee.name == 'layer') {
-    final target = evaluate(callee.target, ctx);
-    if (target is! ThisCompRef) {
-      throw ExpressionEvalError('"layer" is only supported on thisComp');
+  if (callee is MemberNode) {
+    final name = callee.name;
+    if (name == 'layer') {
+      final target = _eval(callee.target, ctx, vars);
+      if (target is! ThisCompRef) {
+        throw ExpressionEvalError('"layer" is only supported on thisComp');
+      }
+      if (call.args.length != 1) {
+        throw ExpressionEvalError('layer() expects exactly one argument');
+      }
+      final selector = _force(_eval(call.args.single, ctx, vars), ctx);
+      final layer = findLayer(ctx.layers, selector);
+      if (layer == null) {
+        throw ExpressionEvalError('layer "$selector" not found');
+      }
+      return LayerRef(layer);
     }
-    if (call.args.length != 1) {
-      throw ExpressionEvalError('layer() expects exactly one argument');
+    if (name == 'valueAtTime') {
+      final target = _eval(callee.target, ctx, vars);
+      if (target is! PropertyRef) {
+        throw ExpressionEvalError(
+          'valueAtTime() is only supported on a transform property reference',
+        );
+      }
+      if (call.args.length != 1) {
+        throw ExpressionEvalError('valueAtTime() expects exactly one argument');
+      }
+      final tSeconds = _asNum(_force(_eval(call.args.single, ctx, vars), ctx));
+      return sampleRawProperty(target.prop, tSeconds * ctx.fr);
     }
-    final selector = evaluate(call.args.single, ctx);
-    final layer = findLayer(ctx.layers, selector);
-    if (layer == null) {
-      throw ExpressionEvalError('layer "$selector" not found');
+    final target = _eval(callee.target, ctx, vars);
+    if (target is MathRef) {
+      final args = call.args
+          .map((a) => _asNum(_force(_eval(a, ctx, vars), ctx)))
+          .toList();
+      return _callMath(name, args);
     }
-    return LayerRef(layer);
+    throw ExpressionEvalError('unsupported method call ".$name(...)"');
   }
-  if (callee is IdentNode && callee.name == 'random') {
-    final args = call.args.map((a) => _asNum(evaluate(a, ctx))).toList();
-    final num min, max;
-    switch (args.length) {
-      case 0:
-        min = 0;
-        max = 1;
-      case 1:
-        min = 0;
-        max = args[0];
-      default:
-        min = args[0];
-        max = args[1];
+  if (callee is IdentNode) {
+    switch (callee.name) {
+      case 'random':
+        {
+          final args = call.args
+              .map((a) => _asNum(_force(_eval(a, ctx, vars), ctx)))
+              .toList();
+          final num min, max;
+          switch (args.length) {
+            case 0:
+              min = 0;
+              max = 1;
+            case 1:
+              min = 0;
+              max = args[0];
+            default:
+              min = args[0];
+              max = args[1];
+          }
+          return min + ctx._rng.nextDouble() * (max - min);
+        }
+      case 'wiggle':
+        {
+          if (call.args.length < 2) {
+            throw ExpressionEvalError('wiggle() expects at least (freq, amp)');
+          }
+          final freq = _asNum(_force(_eval(call.args[0], ctx, vars), ctx));
+          final amp = _asNum(_force(_eval(call.args[1], ctx, vars), ctx));
+          if (freq <= 0) {
+            throw ExpressionEvalError('wiggle() frequency must be positive');
+          }
+          final knotPos = ctx.timeSeconds * freq;
+          final index = knotPos.floor();
+          final frac = knotPos - index;
+          List<num> knotAt(int i) => ctx._wiggleKnots.putIfAbsent(i, () {
+            return [
+              for (var d = 0; d < ctx.targetDims; d++)
+                ctx.baseValue[d] + (ctx._rng.nextDouble() * 2 - 1) * amp,
+            ];
+          });
+          final a = knotAt(index);
+          final b = knotAt(index + 1);
+          final result = [
+            for (var d = 0; d < a.length; d++) a[d] + (b[d] - a[d]) * frac,
+          ];
+          return ctx.targetDims == 1 ? result[0] : result;
+        }
+      case 'linear':
+      case 'ease':
+      case 'easeIn':
+      case 'easeOut':
+        {
+          final args = call.args
+              .map((a) => _force(_eval(a, ctx, vars), ctx))
+              .toList();
+          return _interpolate(callee.name, args);
+        }
+      case 'clamp':
+        {
+          if (call.args.length != 3) {
+            throw ExpressionEvalError(
+              'clamp() expects exactly three arguments',
+            );
+          }
+          final value = _force(_eval(call.args[0], ctx, vars), ctx);
+          final minV = _force(_eval(call.args[1], ctx, vars), ctx);
+          final maxV = _force(_eval(call.args[2], ctx, vars), ctx);
+          return _clamp(value, minV, maxV);
+        }
+      case 'add':
+      case 'sub':
+      case 'mul':
+      case 'div':
+        {
+          if (call.args.length != 2) {
+            throw ExpressionEvalError(
+              '${callee.name}() expects exactly two arguments',
+            );
+          }
+          final a = _force(_eval(call.args[0], ctx, vars), ctx);
+          final b = _force(_eval(call.args[1], ctx, vars), ctx);
+          final op = const {
+            'add': '+',
+            'sub': '-',
+            'mul': '*',
+            'div': '/',
+          }[callee.name]!;
+          return _applyBinary(op, a, b);
+        }
+      case 'posterizeTime':
+        {
+          if (call.args.length != 1) {
+            throw ExpressionEvalError(
+              'posterizeTime() expects exactly one argument',
+            );
+          }
+          final fps = _asNum(_force(_eval(call.args[0], ctx, vars), ctx));
+          ctx.posterizeFps = fps > 0 ? fps : null;
+          return null;
+        }
+      case 'seedRandom':
+        // This evaluator's random()/wiggle() seeding is already
+        // deterministic and independent of AE's seedRandom() call, so
+        // recognizing (rather than rejecting) it just avoids reporting an
+        // otherwise fully-supported expression as unsupported.
+        return null;
     }
-    return min + ctx._rng.nextDouble() * (max - min);
-  }
-  if (callee is IdentNode && callee.name == 'wiggle') {
-    if (call.args.length < 2) {
-      throw ExpressionEvalError('wiggle() expects at least (freq, amp)');
-    }
-    final freq = _asNum(evaluate(call.args[0], ctx));
-    final amp = _asNum(evaluate(call.args[1], ctx));
-    if (freq <= 0) {
-      throw ExpressionEvalError('wiggle() frequency must be positive');
-    }
-    final knotPos = ctx.timeSeconds * freq;
-    final index = knotPos.floor();
-    final frac = knotPos - index;
-    List<num> knotAt(int i) => ctx._wiggleKnots.putIfAbsent(i, () {
-      return [
-        for (var d = 0; d < ctx.targetDims; d++)
-          ctx.baseValue[d] + (ctx._rng.nextDouble() * 2 - 1) * amp,
-      ];
-    });
-    final a = knotAt(index);
-    final b = knotAt(index + 1);
-    final result = [
-      for (var d = 0; d < a.length; d++) a[d] + (b[d] - a[d]) * frac,
-    ];
-    return ctx.targetDims == 1 ? result[0] : result;
+    throw ExpressionEvalError(
+      'unsupported function call "${callee.name}(...)"',
+    );
   }
   throw ExpressionEvalError('unsupported function call');
+}
+
+/// Executes [program] against [ctx] and returns the resulting value: the
+/// last value assigned to `$bm_rt` if there was one, else the value of the
+/// last executed assignment/bare-expression statement (matching how a
+/// simplified one-line expression with no `$bm_rt` wrapper, used in a few
+/// tests/hand-written fixtures, still produces a value). Resets
+/// [EvalContext.posterizeFps] at the start of the run.
+dynamic runProgram(List<StmtNode> program, EvalContext ctx) {
+  ctx.posterizeFps = null;
+  final vars = <String, dynamic>{};
+  dynamic lastValue;
+
+  void exec(List<StmtNode> stmts) {
+    for (final stmt in stmts) {
+      switch (stmt) {
+        case VarDeclStmt v:
+          if (v.init != null) {
+            vars[v.name] = _force(_eval(v.init!, ctx, vars), ctx);
+          }
+        case AssignStmt a:
+          final value = _force(_eval(a.value, ctx, vars), ctx);
+          vars[a.name] = value;
+          lastValue = value;
+        case ExprStmt e:
+          lastValue = _force(_eval(e.expr, ctx, vars), ctx);
+        case IfStmt f:
+          if (_truthy(_force(_eval(f.cond, ctx, vars), ctx))) {
+            exec(f.thenBranch);
+          } else if (f.elseBranch != null) {
+            exec(f.elseBranch!);
+          }
+        case GroupStmt g:
+          exec(g.body);
+      }
+    }
+  }
+
+  exec(program);
+  return vars.containsKey(r'$bm_rt') ? vars[r'$bm_rt'] : lastValue;
 }

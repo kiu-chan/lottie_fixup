@@ -17,13 +17,21 @@ empty precomps, and expressions that `lottie` doesn't execute (`loopOut()`/
   latter two on any numeric property (position, scale, rotation, opacity...)
   — plus the duration-based `loopOutDuration()`/`loopInDuration()` variants
   in `'cycle'`/`'pingpong'` mode.
-- **Bakes other expressions on a never-animated property**: continuous
-  `time`-based motion (e.g. `time * 180` for constant rotation), cross-layer
-  links (`thisComp.layer('Name').transform.position`, copied exactly when
-  that's the whole expression, sampled when combined with other math), and
+- **Bakes other expressions**, on a never-animated property *or* one that's
+  already keyframed (the expression's result is authoritative, same as After
+  Effects — the original curve is only available through `value`/
+  `valueAtTime()`): continuous `time`-based motion (e.g. `time * 180` for
+  constant rotation), `if`/`else` branching with comparisons/booleans, local
+  `var` bindings, cross-layer links
+  (`thisComp.layer('Name').transform.position`, copied exactly when that's
+  the whole expression on a never-animated property, sampled when combined
+  with other math or via `.valueAtTime(t)`), the `Math.*` namespace,
+  `linear()`/`ease()`/`easeIn()`/`easeOut()`/`clamp()`,
+  `add()`/`sub()`/`mul()`/`div()`/`value`, `posterizeTime()`, and
   `random()`/`wiggle()` (a deterministic, seeded approximation — After
   Effects' own noise/PRNG can't be reproduced bit-for-bit, but this is
-  reproducible across builds and beats a frozen property).
+  reproducible across builds and beats a frozen property). A `wiggle()`-only
+  expression on a shape path wiggles each vertex independently.
 - **Prunes empty precomps** and now-unreferenced assets left behind by the
   fixes above.
 - Use it **at load time** (drop-in decoder, no build step) or **ahead of
@@ -95,17 +103,15 @@ if (result.changed) {
 ## What this does *not* fix
 
 - Expressions this package's small evaluator doesn't understand (e.g.
-  `valueAtTime`, `effect(...)`, a reference into a nested comp) are reported
-  (`diagnose`, or `FixResult.propertyBake.skippedExpressions`) but left
-  untouched.
-- An expression on a property that's *already* keyframed but isn't a
-  `loopOut`/`loopIn`/`loopOutDuration`/`loopInDuration` call (e.g. `wiggle`
-  layered on top of real keyframes, not just a static value) is reported
-  rather than baked — baking it would mean sampling the property's own
-  moving value as the base to jitter around, which isn't implemented.
+  `effect(...)`, a reference into a nested comp, `for`/`while` loops or
+  user-defined functions) are reported (`diagnose`, or
+  `FixResult.propertyBake.skippedExpressions`) but left untouched.
 - `'offset'`/`'continue'` on a non-numeric value (a shape path, for example,
   rather than position/scale/rotation/opacity) is reported rather than
   baked, since those modes work by doing arithmetic directly on the value.
+- A non-`wiggle()` expression on a shape path (arithmetic directly on a path
+  value) is reported rather than baked — After Effects doesn't support that
+  either.
 - A duration variant (`loopOutDuration`/`loopInDuration`) whose duration is
   *shorter* than the keyframed segment itself is reported rather than baked
   — that would need interpolating a cut point in the middle of the real
