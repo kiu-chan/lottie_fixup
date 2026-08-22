@@ -114,7 +114,8 @@ SanitizeResult sanitizeCrashingLayers(Map<String, dynamic> doc) {
   );
 }
 
-List<dynamic> _layersOf(Map<String, dynamic> doc) => (doc['layers'] as List?) ?? [];
+List<dynamic> _layersOf(Map<String, dynamic> doc) =>
+    (doc['layers'] as List?) ?? [];
 
 Set<String> _collectRefIds(List<dynamic> layers) {
   final ids = <String>{};

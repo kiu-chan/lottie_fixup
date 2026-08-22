@@ -78,10 +78,14 @@ void _runFix(List<String> paths) {
       parts.add('gỡ ${result.sanitize.emptyPrecompsRemoved} precomp rỗng');
     }
     if (result.sanitize.unreferencedAssetsRemoved > 0) {
-      parts.add('gỡ ${result.sanitize.unreferencedAssetsRemoved} asset không còn tham chiếu');
+      parts.add(
+        'gỡ ${result.sanitize.unreferencedAssetsRemoved} asset không còn tham chiếu',
+      );
     }
     if (result.bake.propertiesBaked > 0) {
-      parts.add('bake ${result.bake.propertiesBaked} thuộc tính (${result.bake.totalLoops} vòng lặp)');
+      parts.add(
+        'bake ${result.bake.propertiesBaked} thuộc tính (${result.bake.totalLoops} vòng lặp)',
+      );
     }
     print('$path: ${parts.join(', ')}.');
 

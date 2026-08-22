@@ -55,12 +55,7 @@ BakeResult bakeLoopExpressions(Map<String, dynamic> doc) {
   );
 }
 
-void _walk(
-  dynamic node,
-  num end,
-  List<int> loopCounts,
-  List<String> skipped,
-) {
+void _walk(dynamic node, num end, List<int> loopCounts, List<String> skipped) {
   if (node is Map<String, dynamic>) {
     final expr = node['x'];
     final k = node['k'];
@@ -127,7 +122,9 @@ int _bakeProperty(Map<String, dynamic> prop, num end) {
 
 /// Reverses a keyframe segment for 'pingpong', with time made relative to
 /// 0..period, easing mirrored, and spatial tangents swapped.
-List<Map<String, dynamic>> _reverseSegment(List<Map<String, dynamic>> keyframes) {
+List<Map<String, dynamic>> _reverseSegment(
+  List<Map<String, dynamic>> keyframes,
+) {
   final n = keyframes.length;
   final t0 = keyframes.first['t'] as num;
   final period = (keyframes.last['t'] as num) - t0;

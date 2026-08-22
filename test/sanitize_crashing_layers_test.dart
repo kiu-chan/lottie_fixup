@@ -60,7 +60,10 @@ void main() {
           {'ty': 6, 'refId': 'audio_0'},
         ],
         'assets': [
-          {'id': 'audio_0', 'p': 'tutti.wav'}, // no `layers` field: an audio asset, not a precomp
+          {
+            'id': 'audio_0',
+            'p': 'tutti.wav',
+          }, // no `layers` field: an audio asset, not a precomp
         ],
       };
 
@@ -98,21 +101,24 @@ void main() {
       expect((doc['assets'] as List).length, 2);
     });
 
-    test('flags a non-audio layer still missing a transform, without removing it', () {
-      final doc = {
-        'layers': [
-          {'ty': 4, 'nm': 'broken'}, // no `ks`, not audio -> not auto-removed
-        ],
-        'assets': <dynamic>[],
-      };
+    test(
+      'flags a non-audio layer still missing a transform, without removing it',
+      () {
+        final doc = {
+          'layers': [
+            {'ty': 4, 'nm': 'broken'}, // no `ks`, not audio -> not auto-removed
+          ],
+          'assets': <dynamic>[],
+        };
 
-      final result = sanitizeCrashingLayers(doc);
+        final result = sanitizeCrashingLayers(doc);
 
-      expect(result.changed, isFalse);
-      expect((doc['layers'] as List).length, 1);
-      expect(result.layersMissingTransform, hasLength(1));
-      expect(result.layersMissingTransform.single, contains('ty=4'));
-    });
+        expect(result.changed, isFalse);
+        expect((doc['layers'] as List).length, 1);
+        expect(result.layersMissingTransform, hasLength(1));
+        expect(result.layersMissingTransform.single, contains('ty=4'));
+      },
+    );
 
     test('is a no-op on an already-clean document', () {
       final doc = {

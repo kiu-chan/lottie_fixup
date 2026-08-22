@@ -1,7 +1,10 @@
 import 'package:lottie_fixup/lottie_fixup.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Map<String, dynamic> _property(List<Map<String, dynamic>> keyframes, String expr) {
+Map<String, dynamic> _property(
+  List<Map<String, dynamic>> keyframes,
+  String expr,
+) {
   return {'x': expr, 'k': keyframes};
 }
 
@@ -9,9 +12,18 @@ void main() {
   group('bakeLoopExpressions', () {
     test('closed cycle loop repeats forward keyframes to the end', () {
       final prop = _property([
-        {'t': 0, 's': [0]},
-        {'t': 5, 's': [10]},
-        {'t': 10, 's': [0]}, // same as first -> closed loop
+        {
+          't': 0,
+          's': [0],
+        },
+        {
+          't': 5,
+          's': [10],
+        },
+        {
+          't': 10,
+          's': [0],
+        }, // same as first -> closed loop
       ], "loopOut('cycle')");
       final doc = {'op': 24, 'nested': prop};
 
@@ -30,8 +42,14 @@ void main() {
 
     test('open cycle loop snaps back to start with a tiny gap', () {
       final prop = _property([
-        {'t': 0, 's': [0]},
-        {'t': 10, 's': [100]}, // differs from first -> open loop
+        {
+          't': 0,
+          's': [0],
+        },
+        {
+          't': 10,
+          's': [100],
+        }, // differs from first -> open loop
       ], "loopOut('cycle')");
       final doc = {'op': 24, 'nested': prop};
 
@@ -40,7 +58,9 @@ void main() {
       final k = (prop['k'] as List).cast<Map<String, dynamic>>();
       // Expect a keyframe holding the end value just before the loop point,
       // exactly loopGap before the next period boundary.
-      final seam = k.firstWhere((kf) => (kf['t'] as num) > 9 && (kf['t'] as num) < 10);
+      final seam = k.firstWhere(
+        (kf) => (kf['t'] as num) > 9 && (kf['t'] as num) < 10,
+      );
       expect(seam['s'], [100]);
       expect(seam['t'], closeTo(10 - loopGap, 1e-9));
     });
@@ -55,7 +75,10 @@ void main() {
           'to': [1, 0, 0],
           'ti': [-1, 0, 0],
         },
-        {'t': 6, 's': [10]},
+        {
+          't': 6,
+          's': [10],
+        },
       ], "loopOut('pingpong')");
       final doc = {'op': 12, 'nested': prop};
 
@@ -75,8 +98,14 @@ void main() {
 
     test('non-loopOut expressions are left untouched and reported', () {
       final prop = _property([
-        {'t': 0, 's': [0]},
-        {'t': 5, 's': [10]},
+        {
+          't': 0,
+          's': [0],
+        },
+        {
+          't': 5,
+          's': [10],
+        },
       ], 'wiggle(2, 10)');
       final doc = {'op': 24, 'nested': prop};
 
@@ -89,9 +118,18 @@ void main() {
 
     test('is a no-op on an already-baked document', () {
       final prop = _property([
-        {'t': 0, 's': [0]},
-        {'t': 5, 's': [10]},
-        {'t': 10, 's': [0]},
+        {
+          't': 0,
+          's': [0],
+        },
+        {
+          't': 5,
+          's': [10],
+        },
+        {
+          't': 10,
+          's': [0],
+        },
       ], "loopOut('cycle')");
       final doc = {'op': 24, 'nested': prop};
 

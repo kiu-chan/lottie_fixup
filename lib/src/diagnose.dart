@@ -21,7 +21,8 @@ class Diagnosis {
   /// property after its last keyframe.
   final int loopOutOccurrences;
 
-  bool get hasIssues => audioLayers > 0 || emptyPrecomps > 0 || loopOutOccurrences > 0;
+  bool get hasIssues =>
+      audioLayers > 0 || emptyPrecomps > 0 || loopOutOccurrences > 0;
 }
 
 /// Inspects a decoded Lottie [doc] (and its [rawJson] source, used to count

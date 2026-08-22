@@ -16,6 +16,8 @@ void main(List<String> args) {
   }
 
   file.writeAsStringSync(jsonEncode(doc));
-  print('Removed ${result.sanitize.audioLayersRemoved} audio layer(s), '
-      'baked ${result.bake.propertiesBaked} looping propertie(s).');
+  print(
+    'Removed ${result.sanitize.audioLayersRemoved} audio layer(s), '
+    'baked ${result.bake.propertiesBaked} looping propertie(s).',
+  );
 }

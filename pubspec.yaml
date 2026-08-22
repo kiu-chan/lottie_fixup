@@ -1,10 +1,7 @@
 name: lottie_fixup
 description: >-
-  Fixes common issues in Lottie files exported from After Effects/Bodymovin
-  before they crash or freeze on the `lottie` Flutter package: audio layers
-  without a transform block, empty precomps, and loopOut()/loopIn()
-  expressions that Lottie can't execute. Includes a drop-in LottieDecoder to
-  fix files at load time, with no separate build step.
+  Fixes Lottie/Bodymovin exports that crash or freeze the lottie Flutter
+  package: audio layers, empty precomps, and loopOut()/loopIn() expressions.
 version: 0.1.0
 homepage: https://github.com/kiu-chan/lottie_fixup
 repository: https://github.com/kiu-chan/lottie_fixup
@@ -16,8 +13,6 @@ topics:
   - cli
 
 environment:
-  # Khớp mức tối thiểu mà `lottie` (dependency bắt buộc) đòi hỏi — thấp hơn
-  # thì pub không thể resolve được lottie_fixup trên máy đó ngay từ đầu.
   sdk: ^3.12.0
   flutter: '>=3.44.0'
 
