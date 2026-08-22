@@ -5,9 +5,9 @@ import 'package:lottie_fixup/lottie_fixup.dart';
 
 void main() {
   test('fixes a raw, unbaked After Effects export at load time', () async {
-    // Mô phỏng bản xuất Bodymovin thô: 1 shape layer dùng loopOut('cycle')
-    // trên vị trí (chỉ có 2 keyframe cho 1 chu kỳ ngắn) + 1 layer audio
-    // không có `ks` — đúng hai lỗi thực tế lottie_fixup xử lý.
+    // Simulates a raw Bodymovin export: 1 shape layer using loopOut('cycle')
+    // on position (only 2 keyframes for a short cycle) + 1 audio layer
+    // with no `ks` — exactly the two real-world issues lottie_fixup handles.
     final raw = jsonEncode({
       'v': '5.5.2',
       'fr': 30,
@@ -88,10 +88,10 @@ void main() {
     final composition = await fixupLottieDecoder(utf8.encode(raw));
 
     expect(composition, isNotNull);
-    // Không throw (layer audio thiếu `ks` không còn ở đó để làm crash parser)
-    // và không còn cảnh báo "doesn't support expressions" (loopOut đã bake).
+    // Doesn't throw (the audio layer missing `ks` is no longer there to crash the parser)
+    // and no more "doesn't support expressions" warning (loopOut has been baked).
     expect(composition!.warnings, isEmpty);
-    expect(composition.layers, hasLength(1)); // layer audio đã bị gỡ
+    expect(composition.layers, hasLength(1)); // audio layer was removed
   });
 
   test('is a no-op on an already-clean file', () async {

@@ -69,12 +69,13 @@ SanitizeResult sanitizeCrashingLayers(Map<String, dynamic> doc) {
     }
   }
 
-  // Chỉ xoá asset khi thật sự không còn layer nào refId tới nó nữa — kể cả
-  // khi nó rỗng: một layer preComp có thể cố ý trỏ tới precomp rỗng (AE
-  // xuất placeholder). Xoá nhầm asset còn bị tham chiếu để lại `refId`
-  // treo, gây `composition.getPrecomps(refId)!` crash lúc dựng render tree
-  // — muộn hơn và khác hẳn lỗi null-check của layer audio, nên không lộ ra
-  // lúc parse mà chỉ lộ khi thực sự render.
+  // Only remove an asset once no layer refId's it anymore — even if it's
+  // empty: a preComp layer may intentionally point to an empty precomp (an
+  // AE-exported placeholder). Wrongly removing a still-referenced asset
+  // leaves a dangling `refId`, causing `composition.getPrecomps(refId)!` to
+  // crash while building the render tree — later, and quite different from
+  // the audio layer's null-check error, so it doesn't surface at parse
+  // time but only when actually rendering.
   final reachable = _reachableAssetIds(_layersOf(doc), assets);
   var emptyPrecompsRemoved = 0;
   var unreferencedRemoved = 0;

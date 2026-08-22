@@ -9,9 +9,9 @@ empty precomps, and `loopOut()` / `loopIn()` expressions.
 - **Stops the audio-layer crash** — After Effects audio layers (`"ty": 6`)
   ship without the transform block `lottie` expects, which throws
   `Null check operator used on a null value`. This package strips them.
-- **Bakes `loopOut()` / `loopIn()` expressions** into real keyframes, so
-  looping animations don't freeze after their first cycle (`lottie` doesn't
-  execute expressions).
+- **Bakes `loopOut('cycle'|'pingpong')` and `loopIn('cycle')` expressions**
+  into real keyframes, so looping animations don't freeze after their first
+  cycle (`lottie` doesn't execute expressions).
 - **Prunes empty precomps** and now-unreferenced assets left behind by the
   fixes above.
 - Use it **at load time** (drop-in decoder, no build step) or **ahead of
@@ -82,9 +82,11 @@ if (result.changed) {
 
 ## What this does *not* fix
 
-- Expressions other than `loopOut`/`loopIn` (e.g. `wiggle`, `valueAtTime`)
-  are reported (`diagnose`, or `FixResult.bake.skippedExpressions`) but left
-  untouched.
+- Expressions other than `loopOut('cycle'|'pingpong')`/`loopIn('cycle')`
+  (e.g. `wiggle`, `valueAtTime`, `loopIn('pingpong')`, the `'offset'`/
+  `'continue'` loop modes, or a property that calls both `loopIn` and
+  `loopOut`) are reported (`diagnose`, or `FixResult.bake.skippedExpressions`)
+  but left untouched, rather than baked incorrectly.
 - A layer missing `ks` for a reason other than being an audio layer is
   flagged (`SanitizeResult.layersMissingTransform`) rather than silently
   removed, since that could be a real authoring mistake worth checking by

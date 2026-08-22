@@ -34,11 +34,12 @@ void main() {
     });
 
     test('keeps an empty precomp asset still refId-ed by a layer', () {
-      // Bug thật đã gặp: một layer preComp trỏ tới precomp rỗng (AE xuất
-      // placeholder). Xoá asset đó vì "rỗng" để lại `refId` treo, crash
-      // `composition.getPrecomps(refId)!` lúc dựng render tree — muộn hơn
-      // và khác lỗi null-check `ks` của layer audio, chỉ lộ ra khi render
-      // thật chứ không phải lúc parse JSON.
+      // Real bug encountered: a preComp layer points to an empty precomp (AE
+      // exports a placeholder). Removing that asset for being "empty" leaves
+      // a dangling `refId`, crashing `composition.getPrecomps(refId)!` while
+      // building the render tree — later, and different from the audio
+      // layer's `ks` null-check error, only surfacing at actual render
+      // time rather than at JSON parse time.
       final doc = {
         'layers': [
           {'ty': 0, 'nm': 'placeholder', 'refId': 'comp_7', 'ks': {}},

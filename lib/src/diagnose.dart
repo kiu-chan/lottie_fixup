@@ -1,12 +1,17 @@
 /// Read-only inspection of a Lottie document, without mutating it.
 library;
 
+import 'dart:convert';
+
+import 'bake_loop_expressions.dart';
+
 /// Report of issues found in a Lottie document, without fixing anything.
 class Diagnosis {
   const Diagnosis({
     required this.audioLayers,
     required this.emptyPrecomps,
-    required this.loopOutOccurrences,
+    required this.loopExpressionsToBake,
+    required this.unsupportedExpressions,
   });
 
   /// Audio layers (`ty: 6`) across the root and all precomp assets. These
@@ -16,17 +21,25 @@ class Diagnosis {
   /// Precomp assets with an empty `layers` list.
   final int emptyPrecomps;
 
-  /// Occurrences of the substring `loopOut` in the raw file — a rough count
-  /// of expressions the `lottie` package will silently ignore, freezing the
-  /// property after its last keyframe.
-  final int loopOutOccurrences;
+  /// Animated properties with a `loopOut`/`loopIn` expression that `fix`
+  /// can bake into real keyframes.
+  final int loopExpressionsToBake;
+
+  /// Expressions found that `fix` will leave untouched: anything other than
+  /// a supported `loopOut`/`loopIn` call (e.g. `wiggle`, `valueAtTime`), an
+  /// unsupported loop mode (`'offset'`, `'continue'`), `loopIn('pingpong')`,
+  /// or an expression combining both `loopIn` and `loopOut`.
+  final List<String> unsupportedExpressions;
 
   bool get hasIssues =>
-      audioLayers > 0 || emptyPrecomps > 0 || loopOutOccurrences > 0;
+      audioLayers > 0 ||
+      emptyPrecomps > 0 ||
+      loopExpressionsToBake > 0 ||
+      unsupportedExpressions.isNotEmpty;
 }
 
-/// Inspects a decoded Lottie [doc] (and its [rawJson] source, used to count
-/// `loopOut` occurrences) without changing anything.
+/// Inspects a decoded Lottie [doc] (and its [rawJson] source) without
+/// changing anything.
 Diagnosis diagnose(String rawJson, Map<String, dynamic> doc) {
   var audioLayers = 0;
   var emptyPrecomps = 0;
@@ -43,9 +56,15 @@ Diagnosis diagnose(String rawJson, Map<String, dynamic> doc) {
     }
   }
 
+  // bakeLoopExpressions mutates its argument, so run it on a fresh decode of
+  // rawJson rather than the caller's doc, to reuse its detection logic
+  // without actually changing anything the caller can see.
+  final bake = bakeLoopExpressions(jsonDecode(rawJson) as Map<String, dynamic>);
+
   return Diagnosis(
     audioLayers: audioLayers,
     emptyPrecomps: emptyPrecomps,
-    loopOutOccurrences: 'loopOut'.allMatches(rawJson).length,
+    loopExpressionsToBake: bake.propertiesBaked,
+    unsupportedExpressions: bake.skippedExpressions,
   );
 }
