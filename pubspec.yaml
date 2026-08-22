@@ -6,6 +6,8 @@ version: 0.1.0
 homepage: https://github.com/kiu-chan/lottie_fixup
 repository: https://github.com/kiu-chan/lottie_fixup
 issue_tracker: https://github.com/kiu-chan/lottie_fixup/issues
+funding:
+  - https://ko-fi.com/monlycute
 topics:
   - lottie
   - animation
