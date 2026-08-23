@@ -1,3 +1,63 @@
+## 1.0.0
+
+- **Fixed a real crash risk**: `bakePropertyExpressions` only ever caught its
+  own `ExpressionEvalError` around parsing and per-frame sampling, so
+  anything else — a malformed numeric literal in an expression (the
+  tokenizer accepted e.g. `1.2.3` as one token, then `num.parse` threw a
+  `FormatException`), or a cross-layer/`.valueAtTime()` reference into a
+  layer whose property was shaped unexpectedly (a plain `TypeError` from an
+  invalid cast) — propagated all the way up through `fix`/
+  `fixupLottieDecoder` uncaught, crashing the whole file's processing (and
+  the widget) over a single bad expression instead of leaving just that one
+  property unsupported. Both bake paths (`_tryBakeNumeric`,
+  `_tryBakeShapePath`) now catch broadly at that boundary, so one malformed
+  expression or malformed referenced property never takes down every other,
+  unrelated, otherwise-fine property in the same document.
+- **Fixed a real correctness bug**: a division that lands on exactly zero at
+  a sampled frame (e.g. `1 / (time - 1)`) silently produced `Infinity`/`NaN`
+  — Dart's arithmetic doesn't throw on this — which then crashed
+  `jsonEncode` later, at serialization time, with a much less useful error
+  pointing nowhere near the actual expression. Non-finite results are now
+  rejected where a value is finalized into a keyframe, so the property is
+  reported unsupported instead — except where the non-finite value was only
+  ever an intermediate step already handled by `clamp()` (e.g. `clamp(1 / x,
+  -100, 100)`), which still bakes correctly.
+- **Fixed a real correctness bug**: a `wiggle()`-only knot cache was shared
+  across *every* `wiggle()` call in an expression, keyed only by knot index
+  — so a layered "octave noise" rig like `wiggle(1, 50) + wiggle(5, 10)` (a
+  common After Effects technique) had its second call silently read back
+  the first call's cached knot whenever their indices happened to coincide,
+  producing incorrect, correlated motion instead of two independent noise
+  signals. Each `wiggle()` call site now gets its own independent knot
+  cache.
+- **Fixed a real correctness bug**: `bakePropertyExpressions` walked and
+  baked layers/properties top-down in document order, so a cross-layer
+  reference (or, as of this release, a same-layer `thisLayer`/`transform`
+  reference — see below) to a property that itself had its own not-yet-baked
+  expression copied or sampled that property's stale pre-expression value
+  whenever the source happened to appear later in the walk — common, since
+  layer array order has no relationship to pickwhip direction. Once copied,
+  it was never revisited even after the source was correctly baked moments
+  later. Property baking is now dependency-ordered: baking a property first
+  recursively bakes any not-yet-baked property it references (anywhere in
+  its expression, not just a bare reference), regardless of where either one
+  sits in the document. A genuine reference cycle (already undefined
+  behavior in After Effects itself) bakes against the cycle-closing
+  property's current state rather than recursing forever.
+- `bakePropertyExpressions`/cross-layer references: `skew`/`skewAxis` are
+  now recognized transform properties (alongside `position`/`rotation`/
+  `scale`/`opacity`/`anchorPoint`), so
+  `thisComp.layer('Name').transform.skew` no longer reports "unknown
+  transform property".
+- New same-layer reference support: `thisLayer.transform.<prop>` and bare
+  `transform.<prop>` (sugar for the same thing) now resolve to the
+  expression's own layer, reusing the same cross-layer machinery —
+  `.valueAtTime()`, dense sampling when combined with other math, and exact
+  keyframe copying for a bare reference all work identically to a
+  `thisComp.layer(...)` reference. This is exact, not an approximation (like
+  the pre-existing cross-layer support it reuses), so it isn't gated by
+  `BakeOptions`.
+
 ## 0.3.0
 
 - **Fixed a real correctness bug**: `bakePropertyExpressions` used to only

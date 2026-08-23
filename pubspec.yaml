@@ -3,7 +3,7 @@ description: >-
   Fixes Lottie/Bodymovin exports that crash or freeze the lottie Flutter
   package: audio layers, empty precomps, and unexecuted expressions (loops,
   wiggle, random, cross-layer links).
-version: 0.3.0
+version: 1.0.0
 homepage: https://github.com/kiu-chan/lottie_fixup
 repository: https://github.com/kiu-chan/lottie_fixup
 issue_tracker: https://github.com/kiu-chan/lottie_fixup/issues

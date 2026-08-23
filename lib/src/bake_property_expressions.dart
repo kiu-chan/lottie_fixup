@@ -3,8 +3,10 @@
 /// by evaluating them at every frame in `[doc.ip, doc.op]` and writing the
 /// result as real keyframes: continuous `time`-based motion (e.g.
 /// `time * 180`), cross-layer links
-/// (`thisComp.layer('Name').transform.position[.valueAtTime(t)]`), the
-/// `Math.*` namespace, `linear()`/`ease()`/`easeIn()`/`easeOut()`/`clamp()`,
+/// (`thisComp.layer('Name').transform.position[.valueAtTime(t)]`) and their
+/// same-layer equivalent (`thisLayer.transform.position`, or bare
+/// `transform.position`), the `Math.*` namespace,
+/// `linear()`/`ease()`/`easeIn()`/`easeOut()`/`clamp()`,
 /// `add()`/`sub()`/`mul()`/`div()`, `if`/`else`, and the `random()`/
 /// `wiggle()` builtins.
 ///
@@ -26,13 +28,22 @@
 /// `1/freq` seconds apart. Both use a seed derived from the layer and
 /// expression text, so baking the same file twice produces the same result.
 ///
-/// A cross-layer reference that is the *entire* expression
-/// (`thisComp.layer('Name').transform.<prop>`, nothing else, on a
-/// never-keyframed target) is copied exactly — the referenced property's own
-/// keyframes and easing, verbatim — since nothing needs sampling for that
-/// case. Combined into a larger expression (e.g. added to a constant), it's
-/// instead sampled like any other expression, using linear (not bezier)
-/// interpolation of the referenced curve.
+/// A cross-layer or same-layer reference that is the *entire* expression
+/// (`thisComp.layer('Name').transform.<prop>`/`thisLayer.transform.<prop>`,
+/// nothing else, on a never-keyframed target) is copied exactly — the
+/// referenced property's own keyframes and easing, verbatim — since nothing
+/// needs sampling for that case. Combined into a larger expression (e.g.
+/// added to a constant), it's instead sampled like any other expression,
+/// using linear (not bezier) interpolation of the referenced curve.
+///
+/// A reference to a property that itself still has a pending expression is
+/// baked in dependency order — the referenced property is baked first,
+/// recursively, regardless of which order layers/properties happen to
+/// appear in the document — so it's always the referenced property's final
+/// value being copied/sampled, never a stale pre-expression one. A genuine
+/// reference cycle (already undefined behavior in After Effects itself)
+/// bakes against the cycle-closing property's current state rather than
+/// recursing forever.
 ///
 /// A `wiggle()`-only expression on a shape path's `ks` (a `{i,o,v,c}` map,
 /// not a plain number/vector) gets its own dedicated bake: each vertex is
@@ -80,6 +91,8 @@ const _aliasToKey = {
   'scale': 's',
   'opacity': 'o',
   'anchorPoint': 'a',
+  'skew': 'sk',
+  'skewAxis': 'sa',
 };
 
 /// Walks [doc] and bakes every supported non-loop expression found, mutating
@@ -95,15 +108,34 @@ PropertyBakeResult bakePropertyExpressions(
   final end = doc['op'] as num? ?? start;
   var baked = 0;
   final skipped = <String>[];
+  // Tracked across the whole document (not reset per layer/asset) so a
+  // reference to a property that hasn't been walked to yet — anywhere in
+  // the same comp — is baked on demand, in dependency order, instead of
+  // copying/sampling whatever stale pre-expression value it still held at
+  // the moment the top-down walk happened to reach it. See _bakeWithDeps.
+  final visiting = <Map<String, dynamic>>{};
+  final attempted = <Map<String, dynamic>>{};
 
   void walkLayers(List<dynamic> rawLayers) {
     final layers = rawLayers.whereType<Map<String, dynamic>>().toList();
     for (final layer in layers) {
-      _walkNode(layer, layer, layers, fr, start, end, options, (didBake) {
-        if (didBake) {
-          baked++;
-        }
-      }, skipped);
+      _walkNode(
+        layer,
+        layer,
+        layers,
+        fr,
+        start,
+        end,
+        options,
+        (didBake) {
+          if (didBake) {
+            baked++;
+          }
+        },
+        skipped,
+        visiting,
+        attempted,
+      );
     }
   }
 
@@ -130,22 +162,126 @@ void _walkNode(
   BakeOptions options,
   void Function(bool baked) report,
   List<String> skipped,
+  Set<Map<String, dynamic>> visiting,
+  Set<Map<String, dynamic>> attempted,
 ) {
   if (node is Map<String, dynamic>) {
-    final expr = node['x'];
-    if (expr is String) {
-      final ok = _tryBake(node, expr, layer, layers, fr, start, end, options);
-      report(ok);
-      if (!ok) skipped.add(expr);
+    if (node['x'] is String) {
+      _bakeWithDeps(
+        node,
+        layer,
+        layers,
+        fr,
+        start,
+        end,
+        options,
+        report,
+        skipped,
+        visiting,
+        attempted,
+      );
     }
     for (final value in node.values.toList()) {
-      _walkNode(value, layer, layers, fr, start, end, options, report, skipped);
+      _walkNode(
+        value,
+        layer,
+        layers,
+        fr,
+        start,
+        end,
+        options,
+        report,
+        skipped,
+        visiting,
+        attempted,
+      );
     }
   } else if (node is List) {
     for (final value in node) {
-      _walkNode(value, layer, layers, fr, start, end, options, report, skipped);
+      _walkNode(
+        value,
+        layer,
+        layers,
+        fr,
+        start,
+        end,
+        options,
+        report,
+        skipped,
+        visiting,
+        attempted,
+      );
     }
   }
+}
+
+/// Bakes [node]'s expression, first recursively baking any not-yet-baked
+/// same-layer or cross-layer property it references, so a bare/sampled
+/// reference always sees its source's *final* baked value — regardless of
+/// which order layers or properties happen to appear in the document —
+/// rather than whatever pre-expression value the source still held at the
+/// moment the top-down walk happened to reach it (see `_findLayerRefs`).
+/// Memoized via [attempted] so no node is ever (re-)baked or (re-)reported
+/// twice; [visiting] breaks a reference cycle (already undefined behavior
+/// in After Effects itself) by letting the cycle-closing node bake against
+/// its target's current — possibly still-unbaked — state instead of
+/// recursing forever.
+void _bakeWithDeps(
+  Map<String, dynamic> node,
+  Map<String, dynamic> layer,
+  List<Map<String, dynamic>> layers,
+  num fr,
+  num start,
+  num end,
+  BakeOptions options,
+  void Function(bool baked) report,
+  List<String> skipped,
+  Set<Map<String, dynamic>> visiting,
+  Set<Map<String, dynamic>> attempted,
+) {
+  if (attempted.contains(node)) return;
+  if (!visiting.add(node)) {
+    return; // cycle: bake this edge against current state
+  }
+
+  final expr = node['x'] as String;
+  try {
+    for (final ref in _findLayerRefs(parseProgram(expr))) {
+      final selector = ref.$1;
+      final key = ref.$2;
+      final targetLayer = selector == null
+          ? layer
+          : findLayer(layers, selector);
+      if (targetLayer == null) continue;
+      final targetProp = (targetLayer['ks'] as Map?)?[key];
+      if (targetProp is Map<String, dynamic> &&
+          targetProp['x'] is String &&
+          !attempted.contains(targetProp)) {
+        _bakeWithDeps(
+          targetProp,
+          targetLayer,
+          layers,
+          fr,
+          start,
+          end,
+          options,
+          report,
+          skipped,
+          visiting,
+          attempted,
+        );
+      }
+    }
+  } catch (_) {
+    // Unparsable or otherwise malformed; _tryBake below fails the same way
+    // and reports it — nothing to prebake here either way.
+  }
+
+  visiting.remove(node);
+  final ok = _tryBake(node, expr, layer, layers, fr, start, end, options);
+  attempted.add(node);
+  report(ok);
+  if (!ok) skipped.add(expr);
 }
 
 /// Whether `k` is a never-keyframed raw value (a plain number, or a plain
@@ -216,7 +352,12 @@ bool _tryBakeNumeric(
   final List<StmtNode> program;
   try {
     program = parseProgram(expr);
-  } on ExpressionEvalError {
+  } catch (_) {
+    // Anything from an unparsable expression — an `ExpressionEvalError`, or
+    // a lower-level exception from unusual/malformed syntax the tokenizer
+    // wasn't expecting (e.g. a malformed numeric literal) — is treated the
+    // same way: leave this one expression unsupported rather than letting
+    // it crash processing of the rest of the document.
     return false;
   }
 
@@ -237,7 +378,10 @@ bool _tryBakeNumeric(
     if (bareRef != null) {
       final selector = bareRef.$1;
       final key = bareRef.$2;
-      final source = findLayer(layers, selector);
+      // A null selector means a same-layer (`thisLayer`/bare `transform`)
+      // reference — resolve it against this property's own layer instead
+      // of searching for it.
+      final source = selector == null ? layer : findLayer(layers, selector);
       final sourceProp = source == null ? null : (source['ks'] as Map?)?[key];
       if (sourceProp is Map<String, dynamic>) {
         node['a'] = sourceProp['a'];
@@ -270,6 +414,7 @@ bool _tryBakeNumeric(
       '${layer['nm'] ?? layer['ind'] ?? layers.indexOf(layer)}::$expr';
   final ctx = EvalContext(
     layers: layers,
+    selfLayer: layer,
     fr: fr,
     targetDims: targetDims,
     baseValue: initialBaseValue,
@@ -290,7 +435,13 @@ bool _tryBakeNumeric(
           : _toVector(value, targetDims);
       keyframes.add({'t': f, 's': sVal, if (isHold) 'h': 1});
     }
-  } on ExpressionEvalError {
+  } catch (_) {
+    // As above: any failure sampling any single frame (an unsupported
+    // construct, a non-finite result from `_toNum`/`_toVector`, or a
+    // lower-level exception from malformed data reached through a
+    // cross-layer reference) discards this property's partial bake and
+    // reports it unsupported, rather than crashing or writing a partially
+    // baked property.
     return false;
   }
   if (keyframes.isEmpty) return false;
@@ -327,7 +478,7 @@ bool _tryBakeShapePath(
   final List<StmtNode> program;
   try {
     program = parseProgram(expr);
-  } on ExpressionEvalError {
+  } catch (_) {
     return false;
   }
   final valueExpr = _finalValueExpr(program);
@@ -344,6 +495,7 @@ bool _tryBakeShapePath(
     for (var i = 0; i < vertices.length; i++)
       EvalContext(
         layers: layers,
+        selfLayer: layer,
         fr: fr,
         targetDims: 2,
         baseValue: vertices[i],
@@ -366,7 +518,7 @@ bool _tryBakeShapePath(
         ],
       });
     }
-  } on ExpressionEvalError {
+  } catch (_) {
     return false;
   }
   if (keyframes.isEmpty) return false;
@@ -377,29 +529,55 @@ bool _tryBakeShapePath(
   return true;
 }
 
+/// Rejects a non-finite (`NaN`/`Infinity`) result rather than letting it
+/// reach a baked keyframe: Dart's arithmetic doesn't throw on e.g. division
+/// by zero (`1 / 0` is silently `Infinity`, not an error), but `jsonEncode`
+/// throws on a non-finite double, and it would do so later — at
+/// serialization time, in `fixup_decoder.dart`/`bin/lottie_fixup.dart` —
+/// rather than here, where the offending property and expression are still
+/// known. Checked only at final materialization (here), not on every
+/// intermediate arithmetic op, so an expression like `clamp(1 / x, -100,
+/// 100)` still bakes: `_clamp` already saturates an intermediate `Infinity`
+/// to its finite bounds before the result ever reaches this check.
+num _finite(num v) {
+  if (!v.isFinite) {
+    throw ExpressionEvalError('expected a finite number, got $v');
+  }
+  return v;
+}
+
 num _toNum(dynamic v) {
-  if (v is num) return v;
-  if (v is List && v.length == 1 && v.first is num) return v.first as num;
+  if (v is num) return _finite(v);
+  if (v is List && v.length == 1 && v.first is num) {
+    return _finite(v.first as num);
+  }
   throw ExpressionEvalError('expected a scalar result');
 }
 
 List<num> _toVector(dynamic v, int dims) {
-  if (v is num) return [for (var i = 0; i < dims; i++) v];
+  if (v is num) return [for (var i = 0; i < dims; i++) _finite(v)];
   if (v is List) {
     final nums = v.cast<num>();
-    if (nums.length == dims) return nums;
+    if (nums.length == dims) return [for (final n in nums) _finite(n)];
   }
   throw ExpressionEvalError('expected a $dims-component result');
 }
 
 /// If [program] is (ignoring `var $bm_rt;`) a single statement assigning or
-/// evaluating exactly `thisComp.layer(<selector>).transform.<prop>` with
-/// nothing else combined in, returns the literal selector and the matching
-/// `ks` key (`p`/`r`/`s`/`o`/`a`) so the caller can copy that property
-/// verbatim instead of sampling it.
+/// evaluating exactly `thisComp.layer(<selector>).transform.<prop>` (or the
+/// same-layer `thisLayer.transform.<prop>`/bare `transform.<prop>`) with
+/// nothing else combined in, returns the literal selector — null for a
+/// same-layer reference, resolved against the property's own layer instead
+/// of searched for — and the matching `ks` key (`p`/`r`/`s`/`o`/`a`/`sk`/
+/// `sa`), so the caller can copy that property verbatim instead of sampling
+/// it.
 (dynamic, String)? _extractBareRefFromProgram(List<StmtNode> program) {
   final expr = _finalValueExpr(program);
-  return expr == null ? null : _matchBareLayerRef(expr);
+  if (expr == null) return null;
+  final bare = _matchBareLayerRef(expr);
+  if (bare != null) return bare;
+  final selfKey = _matchSelfLayerRef(expr);
+  return selfKey == null ? null : (null, selfKey);
 }
 
 /// The value-producing expression of [program]'s last assignment/bare
@@ -526,6 +704,119 @@ bool _programCallsFunction(List<StmtNode> program, String name) {
   };
   if (selector == null) return null;
   return (selector, key);
+}
+
+/// Like [_matchBareLayerRef], but for a same-layer reference with no
+/// `thisComp.layer(...)` hop — `thisLayer.transform.<prop>` or bare
+/// `transform.<prop>` — returning just the matching `ks` key, since there's
+/// no selector to resolve.
+String? _matchSelfLayerRef(ExprNode ast) {
+  if (ast is! MemberNode) return null;
+  final key = _aliasToKey[ast.name];
+  if (key == null) return null;
+  final target = ast.target;
+  if (target is IdentNode && target.name == 'transform') return key;
+  if (target is MemberNode &&
+      target.name == 'transform' &&
+      target.target is IdentNode &&
+      (target.target as IdentNode).name == 'thisLayer') {
+    return key;
+  }
+  return null;
+}
+
+/// Finds every `thisComp.layer(...).transform.<prop>` or same-layer
+/// `thisLayer.transform.<prop>`/bare `transform.<prop>` reference anywhere
+/// in [program] — not just its final value, since a reference can sit
+/// inside an `if` branch or a `var` initializer — paired with the `ks` key
+/// it resolves to. A null selector (the first tuple element) means a
+/// same-layer reference. Shares its traversal shape with
+/// [_programCallsFunction]; unlike that function, every [MemberNode] is
+/// tested (so a match's own sub-chain — the `layer(...)` call's selector
+/// argument, `.transform` — is never itself descended into as a second,
+/// spurious match) and matches accumulate instead of short-circuiting on
+/// the first hit, since a single expression can combine more than one
+/// reference (e.g. `add(thisComp.layer('A')...,  thisComp.layer('B')...)`).
+List<(dynamic, String)> _findLayerRefs(List<StmtNode> program) {
+  final found = <(dynamic, String)>[];
+
+  void visitExpr(ExprNode node) {
+    if (node is MemberNode) {
+      final bare = _matchBareLayerRef(node);
+      if (bare != null) {
+        found.add(bare);
+        return;
+      }
+      final selfKey = _matchSelfLayerRef(node);
+      if (selfKey != null) {
+        found.add((null, selfKey));
+        return;
+      }
+    }
+    switch (node) {
+      case CallNode c:
+        visitExpr(c.callee);
+        for (final a in c.args) {
+          visitExpr(a);
+        }
+      case BinaryNode b:
+        visitExpr(b.left);
+        visitExpr(b.right);
+      case CompareNode c:
+        visitExpr(c.left);
+        visitExpr(c.right);
+      case LogicalNode l:
+        visitExpr(l.left);
+        visitExpr(l.right);
+      case TernaryNode t:
+        visitExpr(t.cond);
+        visitExpr(t.thenExpr);
+        visitExpr(t.elseExpr);
+      case UnaryNode u:
+        visitExpr(u.operand);
+      case MemberNode m:
+        visitExpr(m.target);
+      case IndexNode ix:
+        visitExpr(ix.target);
+        visitExpr(ix.index);
+      case ArrayNode arr:
+        for (final e in arr.elements) {
+          visitExpr(e);
+        }
+      case NumNode _:
+      case StrNode _:
+      case IdentNode _:
+        break;
+    }
+  }
+
+  void visitStmt(StmtNode stmt) {
+    switch (stmt) {
+      case VarDeclStmt v:
+        if (v.init != null) visitExpr(v.init!);
+      case AssignStmt a:
+        visitExpr(a.value);
+      case ExprStmt e:
+        visitExpr(e.expr);
+      case IfStmt f:
+        visitExpr(f.cond);
+        for (final s in f.thenBranch) {
+          visitStmt(s);
+        }
+        for (final s in f.elseBranch ?? const []) {
+          visitStmt(s);
+        }
+      case GroupStmt g:
+        for (final s in g.body) {
+          visitStmt(s);
+        }
+    }
+  }
+
+  for (final stmt in program) {
+    visitStmt(stmt);
+  }
+  return found;
 }
 
 dynamic _deepClone(dynamic value) {

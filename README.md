@@ -23,9 +23,12 @@ empty precomps, and expressions that `lottie` doesn't execute (`loopOut()`/
   `valueAtTime()`): continuous `time`-based motion (e.g. `time * 180` for
   constant rotation), `if`/`else` branching with comparisons/booleans, local
   `var` bindings, cross-layer links
-  (`thisComp.layer('Name').transform.position`, copied exactly when that's
-  the whole expression on a never-animated property, sampled when combined
-  with other math or via `.valueAtTime(t)`), the `Math.*` namespace,
+  (`thisComp.layer('Name').transform.position`, across all transform
+  properties including `skew`/`skewAxis`, copied exactly when that's the
+  whole expression on a never-animated property, sampled when combined with
+  other math or via `.valueAtTime(t)`) and the same-layer equivalent
+  (`thisLayer.transform.position`, or bare `transform.position`), the
+  `Math.*` namespace,
   `linear()`/`ease()`/`easeIn()`/`easeOut()`/`clamp()`,
   `add()`/`sub()`/`mul()`/`div()`/`value`, `posterizeTime()`, and
   `random()`/`wiggle()` (a deterministic, seeded approximation — After
@@ -43,7 +46,7 @@ Add the dependency:
 
 ```yaml
 dependencies:
-  lottie_fixup: ^0.3.0
+  lottie_fixup: ^1.0.0
 ```
 
 ## Usage
@@ -139,10 +142,15 @@ lottie_fixup fix --no-keyframed-properties assets/animations/*.json
 
 ## What this does *not* fix
 
-- Expressions this package's small evaluator doesn't understand (e.g.
-  `effect(...)`, a reference into a nested comp, `for`/`while` loops or
-  user-defined functions) are reported (`diagnose`, or
-  `FixResult.propertyBake.skippedExpressions`) but left untouched.
+- Expressions this package's small evaluator doesn't understand are reported
+  (`diagnose`, or `FixResult.propertyBake.skippedExpressions`) but left
+  untouched, notably: `effect(...)` (Effects Controller references, e.g. a
+  Slider/Angle/Checkbox control used as a rig parameter); a reference into a
+  comp more than one `thisComp.layer(...)` hop away; `for`/`while` loops or
+  user-defined functions (no such grammar exists); text-layer/`sourceText`
+  animator expressions; comp `marker.*` references; `Math.random()` (as
+  opposed to the supported top-level `random()`); the vector-math helpers
+  `length()`/`normalize()`/`cross()`/`dot()`; and `lookAt()`.
 - `'offset'`/`'continue'` on a non-numeric value (a shape path, for example,
   rather than position/scale/rotation/opacity) is reported rather than
   baked, since those modes work by doing arithmetic directly on the value.

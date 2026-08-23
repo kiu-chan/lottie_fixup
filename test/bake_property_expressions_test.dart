@@ -560,6 +560,331 @@ void main() {
       expect(firstVertexXs.length, greaterThan(1));
       expect(k.first['s'][0]['v'][0], isNot(k.first['s'][0]['v'][1]));
     });
+
+    test(
+      'a malformed cross-layer target property is reported, not crashed on',
+      () {
+        final driver = _layer('Driver', {
+          // Malformed: 'a' is missing (a well-formed export always has it
+          // set to 1 alongside a keyframe list) but 'k' is still shaped
+          // like keyframes, not a raw number — exactly the kind of
+          // unexpected shape this package must degrade gracefully on
+          // instead of crashing the whole file over.
+          'r': {
+            'k': [
+              {
+                't': 0,
+                's': [0],
+              },
+              {
+                't': 10,
+                's': [100],
+              },
+            ],
+          },
+        });
+        final follower = _layer('Follower', {
+          'r': {
+            'a': 0,
+            'k': 0,
+            'x':
+                "var \$bm_rt;\n\$bm_rt = "
+                "thisComp.layer('Driver').transform.rotation + 10;",
+          },
+        });
+        final doc = {
+          'fr': 30,
+          'ip': 0,
+          'op': 10,
+          'layers': [driver, follower],
+        };
+
+        final result = bakePropertyExpressions(doc);
+
+        expect(result.propertiesBaked, 0);
+        expect(result.skippedExpressions, [
+          "var \$bm_rt;\n\$bm_rt = "
+              "thisComp.layer('Driver').transform.rotation + 10;",
+        ]);
+        expect((follower['ks']!['r'] as Map).containsKey('x'), isTrue);
+      },
+    );
+
+    test('a division that hits exactly zero at a sampled frame is reported, '
+        'not baked with a non-finite value', () {
+      final layer = _layer('divide by zero box', {
+        'o': {'a': 0, 'k': 100, 'x': 'var \$bm_rt;\n\$bm_rt = 1 / (time - 1);'},
+      });
+      // fr=30, so frame 30 lands at time == 1.0s exactly, where the
+      // expression divides by zero.
+      final doc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 60,
+        'layers': [layer],
+      };
+
+      final result = bakePropertyExpressions(doc);
+
+      expect(result.propertiesBaked, 0);
+      expect(result.skippedExpressions, [
+        'var \$bm_rt;\n\$bm_rt = 1 / (time - 1);',
+      ]);
+      expect((layer['ks']!['o'] as Map).containsKey('x'), isTrue);
+    });
+
+    test('two wiggle() calls with different amplitudes in one expression are '
+        'independent, not sharing one knot cache', () {
+      final single = _layer('single wiggle', {
+        'r': {'a': 0, 'k': 0, 'x': 'var \$bm_rt;\n\$bm_rt = wiggle(2, 10);'},
+      });
+      final combined = _layer('combined wiggle', {
+        'r': {
+          'a': 0,
+          'k': 0,
+          'x': 'var \$bm_rt;\n\$bm_rt = wiggle(2, 10) + wiggle(2, 1000);',
+        },
+      });
+      final singleDoc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 60,
+        'layers': [single],
+      };
+      final combinedDoc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 60,
+        'layers': [combined],
+      };
+
+      bakePropertyExpressions(singleDoc);
+      bakePropertyExpressions(combinedDoc);
+
+      num maxAbs(Map<String, dynamic> layer) {
+        final k = ((layer['ks']!['r'] as Map)['k'] as List)
+            .cast<Map<String, dynamic>>();
+        return k
+            .map((kf) => ((kf['s'] as List).first as num).abs())
+            .reduce((a, b) => a > b ? a : b);
+      }
+
+      // wiggle(2, 10) alone can never exceed +/-10 (a wiggle's value is
+      // always a convex combination of two knots, each within +/-amp of
+      // the base value). Combined with a second, independent
+      // wiggle(2, 1000) call, the result must be able to range far beyond
+      // that — if the two calls wrongly shared one knot cache (keyed only
+      // by knot index, which collides here since both use the same
+      // frequency), the second call's own amplitude would be ignored in
+      // favor of the first call's cached knots, and the combined result
+      // would be bounded the same as the single-wiggle case instead.
+      expect(maxAbs(single), lessThanOrEqualTo(10));
+      expect(maxAbs(combined), greaterThan(100));
+    });
+
+    test('a cross-layer reference to a property that itself has a pending '
+        'expression is baked after that property, not against its stale '
+        'pre-expression value', () {
+      final follower = _layer('Follower', {
+        'r': {
+          'a': 0,
+          'k': 0,
+          'x':
+              "var \$bm_rt;\n\$bm_rt = "
+              "thisComp.layer('Driver').transform.rotation;",
+        },
+      });
+      final driver = _layer('Driver', {
+        'r': {'a': 0, 'k': 0, 'x': 'var \$bm_rt;\n\$bm_rt = time * 180;'},
+      });
+      final doc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 60,
+        // Driver is declared *after* the layer that references it —
+        // walking the array top-down without dependency ordering would
+        // copy Driver's still-raw pre-expression value (0) instead of
+        // its real animated curve.
+        'layers': [follower, driver],
+      };
+
+      final result = bakePropertyExpressions(doc);
+
+      expect(result.propertiesBaked, 2);
+      final followerR = follower['ks']!['r'] as Map<String, dynamic>;
+      final driverR = driver['ks']!['r'] as Map<String, dynamic>;
+      expect(followerR.containsKey('x'), isFalse);
+      expect(driverR.containsKey('x'), isFalse);
+      // The follower's bare-copied keyframes must equal Driver's own
+      // final baked (time * 180) keyframes exactly, not a frozen
+      // [rotation: 0].
+      expect(followerR['k'], driverR['k']);
+      final k = (driverR['k'] as List).cast<Map<String, dynamic>>();
+      expect((k.last['s'] as List).first, closeTo(360, 1e-9)); // 2s*180/s
+    });
+
+    test('skew and skewAxis are supported cross-layer transform properties', () {
+      final driver = _layer('Driver', {
+        'sk': {'a': 0, 'k': 15},
+        'sa': {'a': 0, 'k': 90},
+      });
+      final follower = _layer('Follower', {
+        'sk': {
+          'a': 0,
+          'k': 0,
+          'x':
+              "var \$bm_rt;\n\$bm_rt = thisComp.layer('Driver').transform.skew;",
+        },
+      });
+      final doc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 10,
+        'layers': [driver, follower],
+      };
+
+      final result = bakePropertyExpressions(doc);
+
+      expect(result.propertiesBaked, 1);
+      final sk = follower['ks']!['sk'] as Map<String, dynamic>;
+      expect(sk.containsKey('x'), isFalse);
+      expect(sk['a'], 0);
+      expect(sk['k'], 15);
+    });
+
+    test("thisLayer.transform.<prop> resolves to the layer's own property", () {
+      final layer = _layer('self box', {
+        'p': {
+          'a': 0,
+          'k': [40, 100, 0],
+        },
+        'r': {
+          'a': 0,
+          'k': 0,
+          'x': 'var \$bm_rt;\n\$bm_rt = thisLayer.transform.position[0] * 2;',
+        },
+      });
+      final doc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 10,
+        'layers': [layer],
+      };
+
+      final result = bakePropertyExpressions(doc);
+
+      expect(result.propertiesBaked, 1);
+      final k = ((layer['ks']!['r'] as Map)['k'] as List)
+          .cast<Map<String, dynamic>>();
+      for (final kf in k) {
+        expect((kf['s'] as List).first, closeTo(80, 1e-9)); // 40 * 2
+      }
+    });
+
+    test('bare transform.<prop> is sugar for thisLayer.transform.<prop>', () {
+      final layer = _layer('self box 2', {
+        's': {
+          'a': 0,
+          'k': [50, 50, 100],
+        },
+        'o': {
+          'a': 0,
+          'k': 100,
+          'x': 'var \$bm_rt;\n\$bm_rt = transform.scale[0] * 2;',
+        },
+      });
+      final doc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 10,
+        'layers': [layer],
+      };
+
+      final result = bakePropertyExpressions(doc);
+
+      expect(result.propertiesBaked, 1);
+      final k = ((layer['ks']!['o'] as Map)['k'] as List)
+          .cast<Map<String, dynamic>>();
+      for (final kf in k) {
+        expect((kf['s'] as List).first, closeTo(100, 1e-9)); // 50 * 2
+      }
+    });
+
+    test('a bare thisLayer self-reference copies keyframes exactly', () {
+      final layer = _layer('mirror box', {
+        'p': {
+          'a': 1,
+          'k': [
+            {
+              'i': {'x': 0.667, 'y': 1},
+              'o': {'x': 0.333, 'y': 0},
+              't': 0,
+              's': [60, 60, 0],
+            },
+            {
+              't': 30,
+              's': [140, 140, 0],
+            },
+          ],
+        },
+        'a': {
+          'a': 0,
+          'k': [0, 0, 0],
+          'x': 'var \$bm_rt;\n\$bm_rt = thisLayer.transform.position;',
+        },
+      });
+      final doc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 30,
+        'layers': [layer],
+      };
+
+      final result = bakePropertyExpressions(doc);
+
+      expect(result.propertiesBaked, 1);
+      final anchorProp = layer['ks']!['a'] as Map<String, dynamic>;
+      expect(anchorProp.containsKey('x'), isFalse);
+      expect(anchorProp['a'], 1);
+      expect(anchorProp['k'], layer['ks']!['p']!['k']);
+    });
+
+    test('a same-layer reference to a property that itself has a pending '
+        'expression is baked after that property, not against its stale '
+        'value', () {
+      final layer = _layer('self chain box', {
+        // Declared before 'r' in the map, so the old top-down-only walk
+        // would visit and bake it before rotation's own expression has
+        // run.
+        'a': {
+          'a': 0,
+          'k': [0, 0, 0],
+          'x': 'var \$bm_rt;\n\$bm_rt = [transform.rotation[0], 0, 0];',
+        },
+        'r': {'a': 0, 'k': 0, 'x': 'var \$bm_rt;\n\$bm_rt = time * 180;'},
+      });
+      final doc = {
+        'fr': 30,
+        'ip': 0,
+        'op': 60,
+        'layers': [layer],
+      };
+
+      final result = bakePropertyExpressions(doc);
+
+      expect(result.propertiesBaked, 2);
+      final anchorK = ((layer['ks']!['a'] as Map)['k'] as List)
+          .cast<Map<String, dynamic>>();
+      final rotationK = ((layer['ks']!['r'] as Map)['k'] as List)
+          .cast<Map<String, dynamic>>();
+      // anchorPoint's baked x-component must track rotation's real
+      // animated curve (0 -> 360 over 2s), not a frozen [0, 0, 0].
+      expect((anchorK.last['s'] as List).first, closeTo(360, 1e-9));
+      expect(
+        (anchorK.last['s'] as List).first,
+        (rotationK.last['s'] as List).first,
+      );
+    });
   });
 
   group('BakeOptions', () {

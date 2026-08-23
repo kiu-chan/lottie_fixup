@@ -1,11 +1,12 @@
 /// A small interpreter for the subset of After Effects/Bodymovin expression
 /// syntax that [bakePropertyExpressions] needs to sample: numeric arithmetic,
 /// comparisons/booleans, `if`/`else`, local `var` bindings, `time`,
-/// `thisComp.layer('Name').transform.<prop>` cross-layer references (plus
-/// `.valueAtTime(t)`), the `Math.*` namespace, `value` (the property's own
-/// pre-expression value), array literals, and the `random`/`wiggle`/
-/// `linear`/`ease`/`easeIn`/`easeOut`/`clamp`/`add`/`sub`/`mul`/`div`/
-/// `posterizeTime`/`seedRandom` builtins.
+/// `thisComp.layer('Name').transform.<prop>` cross-layer references and
+/// their same-layer equivalent (`thisLayer.transform.<prop>`, or bare
+/// `transform.<prop>`) — both plus `.valueAtTime(t)` — the `Math.*`
+/// namespace, `value` (the property's own pre-expression value), array
+/// literals, and the `random`/`wiggle`/`linear`/`ease`/`easeIn`/`easeOut`/
+/// `clamp`/`add`/`sub`/`mul`/`div`/`posterizeTime`/`seedRandom` builtins.
 ///
 /// This is deliberately not a general JavaScript interpreter — no loops or
 /// user-defined functions — just enough grammar to cover the statement
@@ -531,6 +532,8 @@ const _transformAliasToKey = {
   'scale': 's',
   'opacity': 'o',
   'anchorPoint': 'a',
+  'skew': 'sk',
+  'skewAxis': 'sa',
 };
 
 /// Per-property evaluation state: everything [runProgram] needs to resolve
@@ -540,6 +543,7 @@ const _transformAliasToKey = {
 class EvalContext {
   EvalContext({
     required this.layers,
+    required this.selfLayer,
     required this.fr,
     required this.targetDims,
     required this.baseValue,
@@ -549,6 +553,10 @@ class EvalContext {
   /// The layers array containing the layer this expression lives on —
   /// the scope `thisComp.layer(name)` searches.
   final List<Map<String, dynamic>> layers;
+
+  /// The layer this expression itself lives on — what `thisLayer` and bare
+  /// `transform` (sugar for `thisLayer.transform`) resolve to.
+  final Map<String, dynamic> selfLayer;
 
   /// Composition frame rate, for converting `time` (seconds) to the frame
   /// numbers keyframes are stored in.
@@ -573,7 +581,15 @@ class EvalContext {
   num? posterizeFps;
 
   final Random _rng;
-  final Map<int, List<num>> _wiggleKnots = {};
+
+  /// Wiggle knots, keyed first by the source-level `wiggle(...)` call site
+  /// (so two different calls in the same expression — e.g. layered octave
+  /// noise like `wiggle(1,50) + wiggle(5,10)` — never collide just because
+  /// their knot indices happen to coincide) and then by knot index. Safe to
+  /// key by `CallNode` identity: `program` is parsed once and reused for
+  /// every frame sampled for this property, so each call site's node is
+  /// stable across the whole bake.
+  final Map<CallNode, Map<int, List<num>>> _wiggleKnotsByCall = {};
 
   /// Current sample time in frames; set by the caller before each
   /// [runProgram] call.
@@ -832,6 +848,10 @@ dynamic _eval(ExprNode node, EvalContext ctx, Map<String, dynamic> vars) {
           return ctx.timeSeconds;
         case 'thisComp':
           return const ThisCompRef();
+        case 'thisLayer':
+          return LayerRef(ctx.selfLayer);
+        case 'transform':
+          return _resolveMember(LayerRef(ctx.selfLayer), 'transform', ctx);
         case 'Math':
           return const MathRef();
         case 'PI':
@@ -990,7 +1010,8 @@ dynamic _resolveCall(
           final knotPos = ctx.timeSeconds * freq;
           final index = knotPos.floor();
           final frac = knotPos - index;
-          List<num> knotAt(int i) => ctx._wiggleKnots.putIfAbsent(i, () {
+          final knots = ctx._wiggleKnotsByCall.putIfAbsent(call, () => {});
+          List<num> knotAt(int i) => knots.putIfAbsent(i, () {
             return [
               for (var d = 0; d < ctx.targetDims; d++)
                 ctx.baseValue[d] + (ctx._rng.nextDouble() * 2 - 1) * amp,
