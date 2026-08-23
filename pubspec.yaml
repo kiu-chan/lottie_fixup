@@ -1,9 +1,9 @@
 name: lottie_fixup
 description: >-
   Fixes Lottie/Bodymovin exports that crash or freeze the lottie Flutter
-  package: malformed layers, assets, masks, and shape content, and
-  unexecuted expressions (loops, wiggle, random, cross-layer links).
-version: 1.0.0
+  package: malformed layers, assets, masks, shapes, and unexecuted
+  expressions.
+version: 1.0.1
 homepage: https://github.com/kiu-chan/lottie_fixup
 repository: https://github.com/kiu-chan/lottie_fixup
 issue_tracker: https://github.com/kiu-chan/lottie_fixup/issues

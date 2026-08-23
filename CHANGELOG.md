@@ -1,3 +1,7 @@
+## 1.0.1
+
+- Shortened pubspec description.
+
 ## 1.0.0
 
 - **Fixed a real crash risk**: `bakePropertyExpressions` only ever caught its
