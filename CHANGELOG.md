@@ -57,6 +57,62 @@
   `thisComp.layer(...)` reference. This is exact, not an approximation (like
   the pre-existing cross-layer support it reuses), so it isn't gated by
   `BakeOptions`.
+- **New: structural crash detection and repair**, extending
+  `sanitizeCrashingLayers` beyond audio layers/empty precomps to six more
+  crash-causing JSON shapes — each grounded in a specific, confirmed
+  non-null-assertion or unassigned-`late`-field crash in the `lottie`
+  package's own parser/model source, the same standard the audio-layer fix
+  was already held to:
+  - A precomp layer (`ty: 0`) whose `refId` doesn't resolve to any asset
+    (missing, non-string, or no match) is removed —
+    `composition.getPrecomps(refId)!` throws building the render tree
+    otherwise. Unlike a dangling `refId` this package's own pruning might
+    create (already guarded against separately), this can be present in
+    the input file itself.
+  - A text layer (`ty: 5`) missing `t`/`t.d` is removed — `lottie`'s text
+    layer unconditionally null-checks it while being built.
+  - An asset entry with no usable `id` (missing, `null`, a bool, an array,
+    or an object — a number is fine, `lottie` coerces it) is removed —
+    such an asset can never legitimately be referenced, and `lottie`'s own
+    asset parser crashes reading its `id`.
+  - A `masksProperties` entry missing `mode`, `pt`, or `o` is removed —
+    each is read into a variable with no fallback, so `lottie` crashes
+    building the mask itself, not just when it's later applied.
+  - A gradient-fill/gradient-stroke/solid-stroke shape-content item
+    (`gf`/`gs`/`st`) missing a required companion field (gradient
+    colors/start/end point, or stroke color/width) is removed, recursing
+    through shape groups. `lottie`'s own source confirms this really
+    happens in the wild: a code comment there specifically calls out
+    Telegram's Lottie export omitting the sibling opacity field in these
+    same objects.
+  - An out-of-range `lc`/`lj` (line cap/join, valid range `1..3`) on a
+    `gs`/`st` item is cleared — just that one field, leaving the rest of
+    the stroke intact — instead of indexing `lottie`'s internal enum list
+    out of bounds.
+  - New, diagnostic-only (matching the existing `layersMissingTransform`
+    treatment — reported, not altered, since there's no principled safe
+    default for an arbitrary property): any animatable-value-shaped object
+    (`{"a":..,"k":..}`, or a gradient's `{"p":..,"k":..}`) found with a
+    missing or empty `k` is reported via the new
+    `SanitizeResult.propertiesWithEmptyKeyframes` — `lottie` crashes
+    indexing the last element of an empty keyframe list, and this is the
+    broadest-blast-radius issue found (it can occur on essentially any
+    animatable property anywhere in the file).
+  - `SanitizeResult`'s new fields are all optional/defaulted, keeping the
+    door open for a caller to construct one directly (e.g. in a test)
+    without naming every field.
+- `diagnose`/`Diagnosis`: gains a new `sanitize` field (a `SanitizeResult`)
+  surfacing all of the above, plus the pre-existing
+  `layersMissingTransform` diagnostic, which `Diagnosis` never exposed
+  before. Computed on its own fresh decode, independent of the
+  loop/property-expression bake passes, so a structurally-broken layer
+  being removed there never changes what
+  `loopExpressionsToBake`/`propertyExpressionsToBake`/
+  `unsupportedExpressions` report for the same document.
+- CLI: `diagnose` and `fix` both report all of the above; `fix` now prints
+  its diagnostic-only warnings (missing transform, empty keyframes) even
+  on a file where nothing else needed fixing, rather than only printing
+  `nothing to fix.` and silently dropping them.
 
 ## 0.3.0
 

@@ -143,5 +143,52 @@ void main() {
 
       expect(report.hasIssues, isFalse);
     });
+
+    test('surfaces sanitizeCrashingLayers findings via report.sanitize', () {
+      final doc = {
+        'op': 24,
+        'layers': [
+          {'ty': 6, 'refId': 'audio_0'},
+          {'ty': 4, 'nm': 'broken'}, // no ks
+        ],
+        'assets': <dynamic>[],
+      };
+      final raw = jsonEncode(doc);
+
+      final report = diagnose(raw, doc);
+
+      expect(report.sanitize.audioLayersRemoved, 1);
+      expect(report.sanitize.layersMissingTransform, hasLength(1));
+      expect(report.hasIssues, isTrue);
+    });
+
+    test('sanitize findings never change the bake counts, even when sanitize '
+        'would remove a layer that also carries an expression', () {
+      final doc = {
+        'op': 24,
+        'layers': [
+          {
+            'ty': 0,
+            // Dangling: sanitize would remove this layer (see
+            // sanitize_crashing_layers_test.dart), since it points at an
+            // asset that doesn't exist.
+            'refId': 'missing_comp',
+            'ks': {
+              'r': {'a': 0, 'k': 0, 'x': 'time * 180'},
+            },
+          },
+        ],
+        'assets': <dynamic>[],
+      };
+      final raw = jsonEncode(doc);
+
+      final report = diagnose(raw, doc);
+
+      // sanitize (its own separate decode) reports the dangling precomp.
+      expect(report.sanitize.precompLayersWithBadRefRemoved, 1);
+      // The bake passes (their own shared decode, untouched by sanitize)
+      // still see and report the expression on that same layer.
+      expect(report.propertyExpressionsToBake, 1);
+    });
   });
 }

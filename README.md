@@ -1,15 +1,30 @@
 # lottie_fixup
 
 Fixes Lottie/Bodymovin exports that crash or freeze the
-[`lottie`](https://pub.dev/packages/lottie) Flutter package: audio layers,
-empty precomps, and expressions that `lottie` doesn't execute (`loopOut()`/
-`loopIn()`, `wiggle()`, `random()`, `time`-based motion, cross-layer links).
+[`lottie`](https://pub.dev/packages/lottie) Flutter package: malformed
+layers/assets/masks/shape content, and expressions that `lottie` doesn't
+execute (`loopOut()`/`loopIn()`, `wiggle()`, `random()`, `time`-based
+motion, cross-layer links).
 
 ## Features
 
-- **Stops the audio-layer crash** — After Effects audio layers (`"ty": 6`)
-  ship without the transform block `lottie` expects, which throws
-  `Null check operator used on a null value`. This package strips them.
+- **Stops structural crashes** — a range of JSON shapes the schema allows
+  but `lottie`'s own parser/render-tree builder doesn't defensively guard
+  against, each grounded in a specific non-null-assertion or unassigned-
+  field crash confirmed in `lottie`'s source: audio layers (`"ty": 6`,
+  which ship without the transform block `lottie` expects — `Null check
+  operator used on a null value`), a precomp layer (`"ty": 0`) whose
+  `refId` doesn't resolve to any asset, a text layer (`"ty": 5`) missing
+  its document-data block, an asset with no usable `id`, a malformed
+  `masksProperties` entry, and a gradient-fill/gradient-stroke/solid-stroke
+  shape item missing a required field (confirmed by `lottie`'s own source
+  to be a real shape non-After-Effects tools like Telegram's Lottie export
+  ship) — this package removes each one specifically, leaving everything
+  else in the file untouched. An out-of-range stroke line-cap/line-join
+  value is patched in place instead of removed. An animatable value with no
+  actual keyframes (which crashes `lottie` the same way, but has no safe
+  default to substitute) is reported rather than guessed at — see
+  `SanitizeResult.propertiesWithEmptyKeyframes`.
 - **Bakes `loopOut()`/`loopIn()` expressions** into real keyframes, so
   looping animations don't freeze after their first cycle (`lottie` doesn't
   execute expressions). All four After Effects loop modes are supported in
@@ -169,6 +184,13 @@ lottie_fixup fix --no-keyframed-properties assets/animations/*.json
   flagged (`SanitizeResult.layersMissingTransform`) rather than silently
   removed, since that could be a real authoring mistake worth checking by
   hand.
+- Repeater (`ty: "rp"`) and merge-paths (`ty: "mm"`) shape-content items
+  missing their own required fields have the same crash shape as the
+  gradient/stroke items this package does check (an unguarded non-null
+  assertion in `lottie`'s parser) but aren't checked yet.
+- An animatable-value-shaped object with a missing/empty `k` is flagged
+  (`SanitizeResult.propertiesWithEmptyKeyframes`) rather than fixed — see
+  Features above.
 
 ## Additional information
 

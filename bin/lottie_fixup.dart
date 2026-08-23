@@ -10,7 +10,8 @@ Usage:
   dart run lottie_fixup fix [flags] <file.json> [other files...]
 
   diagnose  only reports issues, does not modify the file.
-  fix       fixes in place: removes crashing audio layers/empty precomps, bakes loopOut()/loopIn().
+  fix       fixes in place: removes/repairs crashing layers, assets, masks,
+            and shape content, bakes loopOut()/loopIn() and other expressions.
 
 Flags (each opts out of one approximation/judgment call in expression
 baking; see BakeOptions in the library docs for details on each):
@@ -96,6 +97,42 @@ void _runDiagnose(List<String> paths, BakeOptions options) {
     if (report.emptyPrecomps > 0) {
       print('  - ${report.emptyPrecomps} empty precomp(s)');
     }
+    if (report.sanitize.precompLayersWithBadRefRemoved > 0) {
+      print(
+        '  - ${report.sanitize.precompLayersWithBadRefRemoved} precomp '
+        'layer(s) with an unresolvable refId that may crash',
+      );
+    }
+    if (report.sanitize.textLayersMissingDataRemoved > 0) {
+      print(
+        '  - ${report.sanitize.textLayersMissingDataRemoved} text layer(s) '
+        'missing document data that may crash',
+      );
+    }
+    if (report.sanitize.assetsMissingIdRemoved > 0) {
+      print(
+        '  - ${report.sanitize.assetsMissingIdRemoved} asset(s) with no '
+        'usable id that may crash',
+      );
+    }
+    if (report.sanitize.maskEntriesRemoved > 0) {
+      print(
+        '  - ${report.sanitize.maskEntriesRemoved} malformed mask '
+        'entrie(s) that may crash',
+      );
+    }
+    if (report.sanitize.malformedShapeContentRemoved > 0) {
+      print(
+        '  - ${report.sanitize.malformedShapeContentRemoved} malformed '
+        'gradient/stroke shape item(s) that may crash',
+      );
+    }
+    if (report.sanitize.invalidStrokeCapsOrJoinsFixed > 0) {
+      print(
+        '  - ${report.sanitize.invalidStrokeCapsOrJoinsFixed} stroke(s) '
+        'with an out-of-range cap/join value',
+      );
+    }
     if (report.loopExpressionsToBake > 0) {
       print(
         '  - ${report.loopExpressionsToBake} unbaked loopOut()/loopIn() expression(s)',
@@ -110,6 +147,14 @@ void _runDiagnose(List<String> paths, BakeOptions options) {
     for (final expr in report.unsupportedExpressions.toSet()) {
       print('  ! unsupported expression, will be left as-is: $expr');
     }
+    for (final warning in report.sanitize.layersMissingTransform) {
+      print('  ! layer missing "ks" (transform), may still crash: $warning');
+    }
+    for (final warning in report.sanitize.propertiesWithEmptyKeyframes) {
+      print(
+        '  ! animatable value with no keyframes, may still crash: $warning',
+      );
+    }
   }
 }
 
@@ -121,42 +166,91 @@ void _runFix(List<String> paths, BakeOptions options) {
 
     if (!result.changed) {
       print('$path: nothing to fix.');
-      continue;
+    } else {
+      file.writeAsStringSync(jsonEncode(doc));
+
+      final parts = <String>[];
+      if (result.sanitize.audioLayersRemoved > 0) {
+        parts.add(
+          'removed ${result.sanitize.audioLayersRemoved} audio layer(s)',
+        );
+      }
+      if (result.sanitize.emptyPrecompsRemoved > 0) {
+        parts.add(
+          'removed ${result.sanitize.emptyPrecompsRemoved} empty precomp(s)',
+        );
+      }
+      if (result.sanitize.unreferencedAssetsRemoved > 0) {
+        parts.add(
+          'removed ${result.sanitize.unreferencedAssetsRemoved} '
+          'unreferenced asset(s)',
+        );
+      }
+      if (result.sanitize.precompLayersWithBadRefRemoved > 0) {
+        parts.add(
+          'removed ${result.sanitize.precompLayersWithBadRefRemoved} '
+          'precomp layer(s) with an unresolvable refId',
+        );
+      }
+      if (result.sanitize.textLayersMissingDataRemoved > 0) {
+        parts.add(
+          'removed ${result.sanitize.textLayersMissingDataRemoved} text '
+          'layer(s) missing document data',
+        );
+      }
+      if (result.sanitize.assetsMissingIdRemoved > 0) {
+        parts.add(
+          'removed ${result.sanitize.assetsMissingIdRemoved} asset(s) with '
+          'no usable id',
+        );
+      }
+      if (result.sanitize.maskEntriesRemoved > 0) {
+        parts.add(
+          'removed ${result.sanitize.maskEntriesRemoved} malformed mask '
+          'entrie(s)',
+        );
+      }
+      if (result.sanitize.malformedShapeContentRemoved > 0) {
+        parts.add(
+          'removed ${result.sanitize.malformedShapeContentRemoved} '
+          'malformed gradient/stroke shape item(s)',
+        );
+      }
+      if (result.sanitize.invalidStrokeCapsOrJoinsFixed > 0) {
+        parts.add(
+          'fixed ${result.sanitize.invalidStrokeCapsOrJoinsFixed} stroke(s) '
+          'with an out-of-range cap/join value',
+        );
+      }
+      if (result.bake.propertiesBaked > 0) {
+        parts.add(
+          'baked ${result.bake.propertiesBaked} propert(y/ies) '
+          '(${result.bake.totalLoops} loop(s))',
+        );
+      }
+      if (result.propertyBake.propertiesBaked > 0) {
+        parts.add(
+          'baked ${result.propertyBake.propertiesBaked} property '
+          'expression(s)',
+        );
+      }
+      print('$path: ${parts.join(', ')}.');
     }
 
-    file.writeAsStringSync(jsonEncode(doc));
-
-    final parts = <String>[];
-    if (result.sanitize.audioLayersRemoved > 0) {
-      parts.add('removed ${result.sanitize.audioLayersRemoved} audio layer(s)');
-    }
-    if (result.sanitize.emptyPrecompsRemoved > 0) {
-      parts.add(
-        'removed ${result.sanitize.emptyPrecompsRemoved} empty precomp(s)',
-      );
-    }
-    if (result.sanitize.unreferencedAssetsRemoved > 0) {
-      parts.add(
-        'removed ${result.sanitize.unreferencedAssetsRemoved} unreferenced asset(s)',
-      );
-    }
-    if (result.bake.propertiesBaked > 0) {
-      parts.add(
-        'baked ${result.bake.propertiesBaked} propert(y/ies) (${result.bake.totalLoops} loop(s))',
-      );
-    }
-    if (result.propertyBake.propertiesBaked > 0) {
-      parts.add(
-        'baked ${result.propertyBake.propertiesBaked} property expression(s)',
-      );
-    }
-    print('$path: ${parts.join(', ')}.');
-
+    // Printed regardless of whether anything was actually changed above --
+    // these are all diagnostics fix() never touches (see SanitizeResult's
+    // docs on why each is report-only), so a file with nothing else to fix
+    // can still have one of these worth a human looking at.
     for (final expr in result.propertyBake.skippedExpressions.toSet()) {
       print('  ! skipped unsupported expression: $expr');
     }
     for (final warning in result.sanitize.layersMissingTransform) {
       print('  ! layer missing "ks" (transform), may still crash: $warning');
+    }
+    for (final warning in result.sanitize.propertiesWithEmptyKeyframes) {
+      print(
+        '  ! animatable value with no keyframes, may still crash: $warning',
+      );
     }
   }
 }
