@@ -7,6 +7,7 @@
 /// `dart:ui`.
 library;
 
+export 'src/bake_auto_orient.dart' show AutoOrientBakeResult, bakeAutoOrient;
 export 'src/bake_loop_expressions.dart'
     show BakeResult, bakeLoopExpressions, loopGap;
 export 'src/bake_options.dart' show BakeOptions;

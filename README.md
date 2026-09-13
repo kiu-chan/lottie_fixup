@@ -1,10 +1,10 @@
 # lottie_fixup
 
-Fixes Lottie/Bodymovin exports that crash or freeze the
+Fixes Lottie/Bodymovin exports that crash, freeze or misrender in the
 [`lottie`](https://pub.dev/packages/lottie) Flutter package: malformed
-layers/assets/masks/shape content, and expressions that `lottie` doesn't
+layers/assets/masks/shape content, expressions that `lottie` doesn't
 execute (`loopOut()`/`loopIn()`, `wiggle()`, `random()`, `time`-based
-motion, cross-layer links).
+motion, cross-layer links), and auto-oriented layers it sets spinning.
 
 ## Features
 
@@ -50,6 +50,14 @@ motion, cross-layer links).
   Effects' own noise/PRNG can't be reproduced bit-for-bit, but this is
   reproducible across builds and beats a frozen property). A `wiggle()`-only
   expression on a shape path wiggles each vertex independently.
+- **Stops auto-oriented layers spinning** — `lottie` implements After
+  Effects' Auto-Orient (`"ao": 1`) but hands the direction of travel to
+  `Matrix4.rotateZ` in degrees where it takes radians, so a layer following
+  a curved motion path spins round and round instead of banking along it
+  (and the layer's own rotation is ignored meanwhile). This bakes the
+  orientation After Effects shows — the motion path's tangent, honoring each
+  segment's easing, plus the layer's own rotation — into plain rotation
+  keyframes and turns auto-orient off.
 - **Prunes empty precomps** and now-unreferenced assets left behind by the
   fixes above.
 - Use it **at load time** (drop-in decoder, no build step) or **ahead of
@@ -61,7 +69,7 @@ Add the dependency:
 
 ```yaml
 dependencies:
-  lottie_fixup: ^1.0.0
+  lottie_fixup: ^1.1.0
 ```
 
 ## Usage
@@ -191,6 +199,10 @@ lottie_fixup fix --no-keyframed-properties assets/animations/*.json
 - An animatable-value-shaped object with a missing/empty `k` is flagged
   (`SanitizeResult.propertiesWithEmptyKeyframes`) rather than fixed — see
   Features above.
+- Auto-orient on a 3D layer (`"ddd": 1`), which After Effects orients in 3D,
+  or on a layer whose position/rotation still has an expression this package
+  couldn't bake, is reported (`FixResult.autoOrient.skippedLayers`) rather
+  than baked.
 
 ## Additional information
 

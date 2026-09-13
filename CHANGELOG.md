@@ -1,3 +1,32 @@
+## 1.1.0
+
+- **Fixed a real rendering bug**: a layer using After Effects' Auto-Orient
+  ("Orient Along Path", `"ao": 1`) spins round and round in `lottie` instead
+  of banking along its motion path. `lottie` (still as of 3.5.1) converts the
+  direction of travel to degrees, then passes that to `Matrix4.rotateZ`,
+  which takes radians — so a layer that should bank 60° along a curved path
+  is drawn turning 60 radians, nearly 10 full spins, with an extra jolt
+  wherever its heading crosses ±180°. It also ignores the layer's own
+  rotation while auto-orient is on. The new `bakeAutoOrient` pass, run last
+  by `fix` (and so by `fixupLottieDecoder` and the CLI), works out the
+  orientation After Effects shows — the motion path's tangent at the layer's
+  position along it, honoring each segment's easing, or the actual velocity
+  for a position with separated dimensions — adds the layer's own rotation,
+  writes the sum as rotation keyframes (one per frame, thinned wherever a
+  straight line already fits within 0.01°, with a near-instant snap at a
+  sharp corner in the path), and turns `ao` off. While the layer pauses, or
+  its position jumps (like the seam of a baked `'cycle'` loop), it keeps
+  facing its last heading. A layer that never moves just has `ao` turned
+  off, keeping its own rotation.
+- 3D layers (`"ddd": 1`, which After Effects orients in 3D) and layers whose
+  position or rotation still carries an expression nothing could bake are
+  left as-is and reported instead: `AutoOrientBakeResult.skippedLayers`,
+  `Diagnosis.skippedAutoOrientLayers`, and a `! skipped auto-orient` line
+  from the CLI.
+- New `FixResult.autoOrient` and `Diagnosis.autoOrientLayersToBake`/
+  `skippedAutoOrientLayers`, all with defaults, so existing constructor
+  calls keep compiling.
+
 ## 1.0.1
 
 - Shortened pubspec description.

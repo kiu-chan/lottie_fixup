@@ -11,7 +11,8 @@ Usage:
 
   diagnose  only reports issues, does not modify the file.
   fix       fixes in place: removes/repairs crashing layers, assets, masks,
-            and shape content, bakes loopOut()/loopIn() and other expressions.
+            and shape content, bakes loopOut()/loopIn() and other expressions,
+            and bakes auto-orient into plain rotation keyframes.
 
 Flags (each opts out of one approximation/judgment call in expression
 baking; see BakeOptions in the library docs for details on each):
@@ -144,8 +145,17 @@ void _runDiagnose(List<String> paths, BakeOptions options) {
         '(cross-layer link, time-based, random()/wiggle())',
       );
     }
+    if (report.autoOrientLayersToBake > 0) {
+      print(
+        '  - ${report.autoOrientLayersToBake} auto-oriented layer(s) that '
+        'lottie renders with the wrong rotation',
+      );
+    }
     for (final expr in report.unsupportedExpressions.toSet()) {
       print('  ! unsupported expression, will be left as-is: $expr');
+    }
+    for (final layer in report.skippedAutoOrientLayers) {
+      print('  ! auto-orient will be left as-is: $layer');
     }
     for (final warning in report.sanitize.layersMissingTransform) {
       print('  ! layer missing "ks" (transform), may still crash: $warning');
@@ -234,6 +244,11 @@ void _runFix(List<String> paths, BakeOptions options) {
           'expression(s)',
         );
       }
+      if (result.autoOrient.layersBaked > 0) {
+        parts.add(
+          'baked auto-orient on ${result.autoOrient.layersBaked} layer(s)',
+        );
+      }
       print('$path: ${parts.join(', ')}.');
     }
 
@@ -243,6 +258,9 @@ void _runFix(List<String> paths, BakeOptions options) {
     // can still have one of these worth a human looking at.
     for (final expr in result.propertyBake.skippedExpressions.toSet()) {
       print('  ! skipped unsupported expression: $expr');
+    }
+    for (final layer in result.autoOrient.skippedLayers) {
+      print('  ! skipped auto-orient: $layer');
     }
     for (final warning in result.sanitize.layersMissingTransform) {
       print('  ! layer missing "ks" (transform), may still crash: $warning');

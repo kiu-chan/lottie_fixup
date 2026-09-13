@@ -190,5 +190,44 @@ void main() {
       // still see and report the expression on that same layer.
       expect(report.propertyExpressionsToBake, 1);
     });
+
+    test('reports auto-oriented layers to bake, and ones fix will skip', () {
+      final doc = {
+        'op': 24,
+        'layers': [
+          {
+            'ty': 3,
+            'nm': 'flat',
+            'ao': 1,
+            'ks': {
+              'p': {
+                'a': 1,
+                'k': [
+                  {
+                    't': 0,
+                    's': [0, 0],
+                  },
+                  {
+                    't': 10,
+                    's': [100, 50],
+                  },
+                ],
+              },
+            },
+          },
+          {'ddd': 1, 'ty': 3, 'nm': 'deep', 'ao': 1, 'ks': {}},
+        ],
+        'assets': <dynamic>[],
+      };
+      final raw = jsonEncode(doc);
+
+      final report = diagnose(raw, doc);
+
+      expect(report.autoOrientLayersToBake, 1);
+      expect(report.skippedAutoOrientLayers.single, contains('nm=deep'));
+      expect(report.hasIssues, isTrue);
+      // Read-only: the caller's own document keeps its auto-orient.
+      expect(((doc['layers'] as List).first as Map)['ao'], 1);
+    });
   });
 }

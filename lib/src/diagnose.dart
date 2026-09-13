@@ -3,6 +3,7 @@ library;
 
 import 'dart:convert';
 
+import 'bake_auto_orient.dart';
 import 'bake_loop_expressions.dart';
 import 'bake_options.dart';
 import 'bake_property_expressions.dart';
@@ -22,6 +23,8 @@ class Diagnosis {
       unreferencedAssetsRemoved: 0,
       layersMissingTransform: [],
     ),
+    this.autoOrientLayersToBake = 0,
+    this.skippedAutoOrientLayers = const [],
   });
 
   /// Audio layers (`ty: 6`) across the root and all precomp assets. These
@@ -62,6 +65,17 @@ class Diagnosis {
   /// before baking.
   final SanitizeResult sanitize;
 
+  /// Auto-oriented layers (`"ao": 1`) that `fix` will bake into plain
+  /// rotation keyframes. `lottie`'s own auto-orient rotates them by the
+  /// wrong amount — a layer on a curved motion path spins instead of banking
+  /// along it — see `bakeAutoOrient`.
+  final int autoOrientLayersToBake;
+
+  /// Auto-oriented layers `fix` will leave as-is — 3D layers, or a position/
+  /// rotation still carrying an expression — each as
+  /// `"<layer descriptor>: <reason>"`.
+  final List<String> skippedAutoOrientLayers;
+
   bool get hasIssues =>
       audioLayers > 0 ||
       emptyPrecomps > 0 ||
@@ -70,7 +84,9 @@ class Diagnosis {
       unsupportedExpressions.isNotEmpty ||
       sanitize.changed ||
       sanitize.layersMissingTransform.isNotEmpty ||
-      sanitize.propertiesWithEmptyKeyframes.isNotEmpty;
+      sanitize.propertiesWithEmptyKeyframes.isNotEmpty ||
+      autoOrientLayersToBake > 0 ||
+      skippedAutoOrientLayers.isNotEmpty;
 }
 
 /// Inspects a decoded Lottie [doc] (and its [rawJson] source) without
@@ -97,16 +113,16 @@ Diagnosis diagnose(
     }
   }
 
-  // sanitizeCrashingLayers/bakeLoopExpressions/bakePropertyExpressions all
-  // mutate their argument, so each runs on a fresh decode of rawJson rather
-  // than the caller's doc, to reuse their detection logic without actually
-  // changing anything the caller can see. propertyBake runs second, on the
-  // same freshly-baked doc as bake, so it only sees (and reports on)
-  // expressions the loop bake left untouched — matching the order `fix`
-  // itself runs the two passes in.
+  // sanitizeCrashingLayers and the bake passes all mutate their argument,
+  // so each runs on a fresh decode of rawJson rather than the caller's doc,
+  // to reuse their detection logic without actually changing anything the
+  // caller can see. The bake passes share one decode and run in the same
+  // order `fix` runs them, so each only sees (and reports on) what the ones
+  // before it left: propertyBake the expressions the loop bake left
+  // untouched, and autoOrient the positions both of them already baked.
   //
   // sanitize deliberately gets its *own separate* fresh decode rather than
-  // sharing freshDoc with the two bake calls: sanitizeCrashingLayers can
+  // sharing freshDoc with the bake calls: sanitizeCrashingLayers can
   // remove a whole layer (a precomp with a dangling refId, a text layer
   // missing its document data), and that layer could itself carry an
   // expression. Chaining sanitize -> bake on one shared decode (which would
@@ -123,6 +139,7 @@ Diagnosis diagnose(
   final freshDoc = jsonDecode(rawJson) as Map<String, dynamic>;
   final bake = bakeLoopExpressions(freshDoc);
   final propertyBake = bakePropertyExpressions(freshDoc, options: options);
+  final autoOrient = bakeAutoOrient(freshDoc);
 
   return Diagnosis(
     audioLayers: audioLayers,
@@ -131,5 +148,7 @@ Diagnosis diagnose(
     propertyExpressionsToBake: propertyBake.propertiesBaked,
     unsupportedExpressions: propertyBake.skippedExpressions,
     sanitize: sanitize,
+    autoOrientLayersToBake: autoOrient.layersBaked,
+    skippedAutoOrientLayers: autoOrient.skippedLayers,
   );
 }
