@@ -69,7 +69,14 @@ Add the dependency:
 
 ```yaml
 dependencies:
-  lottie_fixup: ^1.1.0
+  lottie_fixup: ^1.1.1
+```
+
+Only using the [CLI](#ahead-of-time--cli)? Add it under `dev_dependencies`
+instead, so it stays out of your app:
+
+```bash
+flutter pub add --dev lottie_fixup
 ```
 
 ## Usage
@@ -102,13 +109,18 @@ Lottie.asset(
 ### Ahead of time — CLI
 
 For an animation that ships in every build and never changes, fix it once
-and skip the runtime cost entirely:
+and skip the runtime cost entirely. Run the CLI with `dart run` from a
+Flutter project that has `lottie_fixup` in its `dependencies` or
+`dev_dependencies`:
 
 ```bash
-dart pub global activate lottie_fixup
-lottie_fixup diagnose assets/animations/*.json   # report only, no changes
-lottie_fixup fix assets/animations/*.json        # fix in place
+dart run lottie_fixup diagnose assets/animations/*.json   # report only, no changes
+dart run lottie_fixup fix assets/animations/*.json        # fix in place
 ```
+
+It can't be installed with `dart pub global activate`: the package depends on
+the Flutter SDK (for `fixupLottieDecoder`), and pub doesn't run global
+executables from such packages.
 
 ### Library
 
@@ -160,7 +172,7 @@ Lottie.asset(
 
 ```bash
 # CLI
-lottie_fixup fix --no-keyframed-properties assets/animations/*.json
+dart run lottie_fixup fix --no-keyframed-properties assets/animations/*.json
 ```
 
 ## What this does *not* fix

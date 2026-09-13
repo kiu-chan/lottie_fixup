@@ -1,3 +1,12 @@
+## 1.1.1
+
+- Fixed the README's CLI instructions: `dart pub global activate
+  lottie_fixup` installs, but running it then fails with "requires the
+  Flutter SDK, which is unsupported for global executables", since the
+  package depends on the Flutter SDK (for `fixupLottieDecoder`). The README
+  now adds `lottie_fixup` to `dev_dependencies` and runs the CLI with
+  `dart run lottie_fixup`.
+
 ## 1.1.0
 
 - **Fixed a real rendering bug**: a layer using After Effects' Auto-Orient
