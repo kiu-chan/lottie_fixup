@@ -12,8 +12,9 @@ Usage:
   diagnose  only reports issues, does not modify the file.
   fix       fixes in place: removes/repairs crashing layers, assets, masks,
             shape content, and keyframes, bakes loopOut()/loopIn() and other
-            expressions, bakes auto-orient into plain rotation keyframes, and
-            removes layer effects lottie ignores.
+            expressions, bakes auto-orient into plain rotation keyframes,
+            removes layer effects lottie ignores, and extends layers that
+            blink out once per time-remapped loop.
 
 Flags (each opts out of one approximation/judgment call in expression
 baking; see BakeOptions in the library docs for details on each):
@@ -164,11 +165,20 @@ void _runDiagnose(List<String> paths, BakeOptions options) {
         '(load warning)',
       );
     }
+    if (report.timeRemapGaps.layersExtended > 0) {
+      print(
+        '  - ${report.timeRemapGaps.layersExtended} layer(s) missing a frame '
+        'of their time-remapped cycle (blinks out every loop)',
+      );
+    }
     for (final expr in report.unsupportedExpressions.toSet()) {
       print('  ! unsupported expression, will be left as-is: $expr');
     }
     for (final layer in report.skippedAutoOrientLayers) {
       print('  ! auto-orient will be left as-is: $layer');
+    }
+    for (final layer in report.timeRemapGaps.skippedLayers) {
+      print('  ! time-remap gap will be left as-is: $layer');
     }
     for (final warning in report.sanitize.layersMissingTransform) {
       print('  ! layer missing "ks" (transform), may still crash: $warning');
@@ -271,6 +281,12 @@ void _runFix(List<String> paths, BakeOptions options) {
       if (result.effects.changed) {
         parts.add('removed ${_effectsSummary(result.effects)}');
       }
+      if (result.timeRemapGaps.layersExtended > 0) {
+        parts.add(
+          'extended ${result.timeRemapGaps.layersExtended} layer(s) to '
+          'cover their time-remapped cycle',
+        );
+      }
       print('$path: ${parts.join(', ')}.');
     }
 
@@ -283,6 +299,9 @@ void _runFix(List<String> paths, BakeOptions options) {
     }
     for (final layer in result.autoOrient.skippedLayers) {
       print('  ! skipped auto-orient: $layer');
+    }
+    for (final layer in result.timeRemapGaps.skippedLayers) {
+      print('  ! skipped time-remap gap: $layer');
     }
     for (final warning in result.sanitize.layersMissingTransform) {
       print('  ! layer missing "ks" (transform), may still crash: $warning');

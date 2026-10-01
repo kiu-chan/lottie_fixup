@@ -5,7 +5,8 @@ Fixes Lottie/Bodymovin exports that crash, freeze or misrender in the
 layers/assets/masks/shape content/keyframes, expressions that `lottie`
 doesn't execute (`loopOut()`/`loopIn()`, `wiggle()`, `random()`,
 `time`-based motion, cross-layer links), auto-oriented layers it sets
-spinning, and layer effects it ignores.
+spinning, layer effects it ignores, and layers that blink out once per
+time-remapped loop.
 
 ## Features
 
@@ -70,6 +71,11 @@ spinning, and layer effects it ignores.
   Contrast, Tint...) — which otherwise put "Lottie doesn't support layer
   effects" in the composition's `warnings`. Gaussian Blur and Drop Shadow,
   which `lottie` does render, are kept.
+- **Stops parts blinking out once per loop** — in a precomp cycled by a
+  time remap (a walk cycle, say), a layer meant to span the whole cycle but
+  starting a frame late or ending a frame early vanishes for that frame of
+  every loop. Its in/out point is moved to cover the whole remapped range,
+  keeping its keyframes.
 - **Prunes empty precomps** and now-unreferenced assets left behind by the
   fixes above.
 - Use it **at load time** (drop-in decoder, no build step) or **ahead of
@@ -81,7 +87,7 @@ Add the dependency:
 
 ```yaml
 dependencies:
-  lottie_fixup: ^1.2.0
+  lottie_fixup: ^1.2.1
 ```
 
 Only using the [CLI](#ahead-of-time--cli)? Add it under `dev_dependencies`
@@ -227,6 +233,10 @@ dart run lottie_fixup fix --no-keyframed-properties assets/animations/*.json
   or on a layer whose position/rotation still has an expression this package
   couldn't bake, is reported (`FixResult.autoOrient.skippedLayers`) rather
   than baked.
+- In a time-remapped precomp, a layer that spans the cycle but misses more
+  than one frame of it is reported (`FixResult.timeRemapGaps.skippedLayers`)
+  rather than extended, since a part appearing partway through the cycle
+  could be deliberate.
 
 ## Additional information
 

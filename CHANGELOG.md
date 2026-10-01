@@ -1,3 +1,20 @@
+## 1.2.1
+
+- **Fixed a part blinking out once per loop**: a layer inside a
+  time-remapped precomp (a walk cycle, a wing beat...) that starts a frame
+  late or ends a frame early — `"ip": 1` while the remap jumps back to
+  frame 0 — is invisible for that frame of every cycle, so a limb vanishes
+  and reappears each loop. The new `closeTimeRemapGaps` pass, run last by
+  `fix`, moves such a layer's `ip`/`op` to cover the whole remapped range;
+  its keyframes are untouched, so it holds its first or last value in the
+  frame it gains. A layer counts as spanning the cycle when it lasts as long
+  as the remapped range, give or take a frame, so short-lived parts like a
+  blink are left alone. A gap wider than one frame could be deliberate and
+  is reported instead. Only precomps played exclusively through an animated
+  time remap are touched. New `FixResult.timeRemapGaps` and
+  `Diagnosis.timeRemapGaps`, both with defaults, so existing constructor
+  calls keep compiling.
+
 ## 1.2.0
 
 - **Fixed a real crash**: an animated property left with a keyframe that

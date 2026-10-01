@@ -7,6 +7,7 @@ import 'bake_auto_orient.dart';
 import 'bake_loop_expressions.dart';
 import 'bake_options.dart';
 import 'bake_property_expressions.dart';
+import 'close_time_remap_gaps.dart';
 import 'sanitize_crashing_layers.dart';
 import 'strip_unsupported_effects.dart';
 
@@ -30,6 +31,10 @@ class Diagnosis {
       effectsRemoved: 0,
       layersCleared: 0,
       effectNames: [],
+    ),
+    this.timeRemapGaps = const TimeRemapGapResult(
+      layersExtended: 0,
+      skippedLayers: [],
     ),
   });
 
@@ -87,6 +92,13 @@ class Diagnosis {
   /// doesn't support layer effects" on load. See `stripUnsupportedEffects`.
   final EffectStripResult effects;
 
+  /// Layers in a time-remapped precomp that miss part of the remapped range
+  /// although they span the whole cycle, so they vanish for a moment every
+  /// loop: [TimeRemapGapResult.layersExtended] counts those `fix` will
+  /// extend, [TimeRemapGapResult.skippedLayers] those with a gap too wide to
+  /// close automatically. See `closeTimeRemapGaps`.
+  final TimeRemapGapResult timeRemapGaps;
+
   bool get hasIssues =>
       audioLayers > 0 ||
       emptyPrecomps > 0 ||
@@ -98,7 +110,9 @@ class Diagnosis {
       sanitize.propertiesWithEmptyKeyframes.isNotEmpty ||
       autoOrientLayersToBake > 0 ||
       skippedAutoOrientLayers.isNotEmpty ||
-      effects.changed;
+      effects.changed ||
+      timeRemapGaps.changed ||
+      timeRemapGaps.skippedLayers.isNotEmpty;
 }
 
 /// Inspects a decoded Lottie [doc] (and its [rawJson] source) without
@@ -153,6 +167,7 @@ Diagnosis diagnose(
   final propertyBake = bakePropertyExpressions(freshDoc, options: options);
   final autoOrient = bakeAutoOrient(freshDoc);
   final effects = stripUnsupportedEffects(freshDoc);
+  final timeRemapGaps = closeTimeRemapGaps(freshDoc);
 
   return Diagnosis(
     audioLayers: audioLayers,
@@ -164,5 +179,6 @@ Diagnosis diagnose(
     autoOrientLayersToBake: autoOrient.layersBaked,
     skippedAutoOrientLayers: autoOrient.skippedLayers,
     effects: effects,
+    timeRemapGaps: timeRemapGaps,
   );
 }

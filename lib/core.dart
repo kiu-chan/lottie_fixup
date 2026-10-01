@@ -13,6 +13,8 @@ export 'src/bake_loop_expressions.dart'
 export 'src/bake_options.dart' show BakeOptions;
 export 'src/bake_property_expressions.dart'
     show PropertyBakeResult, bakePropertyExpressions;
+export 'src/close_time_remap_gaps.dart'
+    show TimeRemapGapResult, closeTimeRemapGaps;
 export 'src/diagnose.dart' show Diagnosis, diagnose;
 export 'src/fix.dart' show FixResult, fix;
 export 'src/sanitize_crashing_layers.dart'
