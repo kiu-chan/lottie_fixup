@@ -11,8 +11,9 @@ Usage:
 
   diagnose  only reports issues, does not modify the file.
   fix       fixes in place: removes/repairs crashing layers, assets, masks,
-            and shape content, bakes loopOut()/loopIn() and other expressions,
-            and bakes auto-orient into plain rotation keyframes.
+            shape content, and keyframes, bakes loopOut()/loopIn() and other
+            expressions, bakes auto-orient into plain rotation keyframes, and
+            removes layer effects lottie ignores.
 
 Flags (each opts out of one approximation/judgment call in expression
 baking; see BakeOptions in the library docs for details on each):
@@ -134,6 +135,12 @@ void _runDiagnose(List<String> paths, BakeOptions options) {
         'with an out-of-range cap/join value',
       );
     }
+    if (report.sanitize.keyframesWithoutEndValueFixed > 0) {
+      print(
+        '  - ${report.sanitize.keyframesWithoutEndValueFixed} animated '
+        'propert(y/ies) with a keyframe missing its end value that may crash',
+      );
+    }
     if (report.loopExpressionsToBake > 0) {
       print(
         '  - ${report.loopExpressionsToBake} unbaked loopOut()/loopIn() expression(s)',
@@ -149,6 +156,12 @@ void _runDiagnose(List<String> paths, BakeOptions options) {
       print(
         '  - ${report.autoOrientLayersToBake} auto-oriented layer(s) that '
         'lottie renders with the wrong rotation',
+      );
+    }
+    if (report.effects.changed) {
+      print(
+        '  - ${_effectsSummary(report.effects)} that lottie ignores '
+        '(load warning)',
       );
     }
     for (final expr in report.unsupportedExpressions.toSet()) {
@@ -232,6 +245,12 @@ void _runFix(List<String> paths, BakeOptions options) {
           'with an out-of-range cap/join value',
         );
       }
+      if (result.sanitize.keyframesWithoutEndValueFixed > 0) {
+        parts.add(
+          'held ${result.sanitize.keyframesWithoutEndValueFixed} '
+          'keyframe(s) missing an end value',
+        );
+      }
       if (result.bake.propertiesBaked > 0) {
         parts.add(
           'baked ${result.bake.propertiesBaked} propert(y/ies) '
@@ -248,6 +267,9 @@ void _runFix(List<String> paths, BakeOptions options) {
         parts.add(
           'baked auto-orient on ${result.autoOrient.layersBaked} layer(s)',
         );
+      }
+      if (result.effects.changed) {
+        parts.add('removed ${_effectsSummary(result.effects)}');
       }
       print('$path: ${parts.join(', ')}.');
     }
@@ -271,4 +293,14 @@ void _runFix(List<String> paths, BakeOptions options) {
       );
     }
   }
+}
+
+/// "3 layer effect(s) (Slider Control, Tint)", or "1 empty layer effect
+/// list" when only an empty `ef` key goes.
+String _effectsSummary(EffectStripResult effects) {
+  if (effects.effectsRemoved == 0) {
+    return '${effects.layersCleared} empty layer effect list(s)';
+  }
+  return '${effects.effectsRemoved} layer effect(s) '
+      '(${effects.effectNames.toSet().join(', ')})';
 }

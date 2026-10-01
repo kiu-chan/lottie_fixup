@@ -35,6 +35,7 @@ class SanitizeResult {
     this.maskEntriesRemoved = 0,
     this.malformedShapeContentRemoved = 0,
     this.invalidStrokeCapsOrJoinsFixed = 0,
+    this.keyframesWithoutEndValueFixed = 0,
     this.propertiesWithEmptyKeyframes = const [],
   });
 
@@ -107,6 +108,22 @@ class SanitizeResult {
   /// value does.
   final int invalidStrokeCapsOrJoinsFixed;
 
+  /// Animated properties with a keyframe `lottie` keeps but can never find
+  /// an end value for, turned into a hold keyframe (`"h": 1`) so it holds
+  /// its own start value. `lottie` takes a missing `e` from the next
+  /// keyframe's `s`; with no next keyframe to borrow from — typically a
+  /// property left with a single keyframe and no `e` — the end value stays
+  /// `null`, and a number, point or color animation (rotation, a trim
+  /// path's start/end, a fill color...) throws `Missing values for
+  /// keyframe.` the first time the property is drawn — when its layer comes
+  /// into view, not when the file is parsed. (Integer animations such as a
+  /// layer's opacity fall back to the start value instead, but are held the
+  /// same way for consistency.) Holding the start value is
+  /// what After Effects shows for such a keyframe. Text-document keyframes
+  /// (an object `s`) are left alone: a single `e`-less keyframe is their
+  /// normal shape, and `lottie`'s text animation handles it.
+  final int keyframesWithoutEndValueFixed;
+
   /// Diagnostics only, not auto-fixed: animatable-value-shaped objects
   /// (`{"a":.., "k":..}`, or a gradient's `{"p":.., "k":..}`) found with a
   /// missing or empty `k`. `lottie` crashes indexing the last element of an
@@ -126,7 +143,8 @@ class SanitizeResult {
       assetsMissingIdRemoved > 0 ||
       maskEntriesRemoved > 0 ||
       malformedShapeContentRemoved > 0 ||
-      invalidStrokeCapsOrJoinsFixed > 0;
+      invalidStrokeCapsOrJoinsFixed > 0 ||
+      keyframesWithoutEndValueFixed > 0;
 }
 
 /// Removes crashing/dead layers, assets, masks, and shape content from
@@ -262,6 +280,15 @@ SanitizeResult sanitizeCrashingLayers(Map<String, dynamic> doc) {
     }
   });
 
+  var keyframesWithoutEndValueFixed = 0;
+  _forEachLayerList(doc, assets, (layers) {
+    for (final l in layers) {
+      if (l is Map) {
+        keyframesWithoutEndValueFixed += _holdKeyframesWithoutEndValue(l);
+      }
+    }
+  });
+
   final missingTransform = <String>[];
   void scanMissingTransform(List<dynamic> layers, String where) {
     for (final l in layers) {
@@ -303,6 +330,7 @@ SanitizeResult sanitizeCrashingLayers(Map<String, dynamic> doc) {
     maskEntriesRemoved: maskEntriesRemoved,
     malformedShapeContentRemoved: malformedShapeContentRemoved,
     invalidStrokeCapsOrJoinsFixed: invalidStrokeCapsOrJoinsFixed,
+    keyframesWithoutEndValueFixed: keyframesWithoutEndValueFixed,
     propertiesWithEmptyKeyframes: emptyKeyframes,
   );
 }
@@ -431,4 +459,62 @@ void _scanEmptyKeyframes(
       _scanEmptyKeyframes(node[i], '$path[$i]', layerDescriptor, found);
     }
   }
+}
+
+/// Recursively finds every keyframe list under [node] (a `k` list whose
+/// entries are `{"t": ..}` keyframe objects) and gives each keyframe that
+/// `lottie` would keep without ever resolving an end value a `"h": 1`, so it
+/// holds its own start value instead of throwing. Returns how many
+/// properties were changed.
+///
+/// Mirrors `lottie`'s own resolution (`KeyframesParser.setEndFrames`): a
+/// hold keyframe ends on its own start value; a missing `e` is borrowed from
+/// the next keyframe's `s`; and a last keyframe that still has no end value
+/// is dropped when there's an earlier one, since it only marks where the
+/// previous segment ends. Whatever is left with an `s` but no end value is
+/// exactly what crashes. A keyframe with no `s` at all has no value to hold,
+/// so it's left as-is.
+int _holdKeyframesWithoutEndValue(dynamic node) {
+  var fixed = 0;
+  if (node is Map) {
+    final k = node['k'];
+    if (k is List &&
+        k.isNotEmpty &&
+        k.first is Map &&
+        (k.first as Map).containsKey('t') &&
+        _holdUnresolvedEndValues(k)) {
+      fixed++;
+    }
+    for (final value in node.values) {
+      fixed += _holdKeyframesWithoutEndValue(value);
+    }
+  } else if (node is List) {
+    for (final value in node) {
+      fixed += _holdKeyframesWithoutEndValue(value);
+    }
+  }
+  return fixed;
+}
+
+/// Marks every keyframe in [keyframes] that `lottie` can't resolve an end
+/// value for as a hold keyframe. Returns whether any was marked.
+bool _holdUnresolvedEndValues(List<dynamic> keyframes) {
+  var changed = false;
+  for (var i = 0; i < keyframes.length; i++) {
+    final kf = keyframes[i];
+    // Only a list-valued `s` (numbers, a color, a shape path) is interpolated
+    // this way; an object `s` is a text document, see
+    // SanitizeResult.keyframesWithoutEndValueFixed.
+    if (kf is! Map || kf['s'] is! List || kf.containsKey('e')) continue;
+    if (kf['h'] == 1) continue;
+    final isLast = i == keyframes.length - 1;
+    if (isLast && keyframes.length > 1) continue; // dropped by lottie
+    if (!isLast) {
+      final next = keyframes[i + 1];
+      if (next is Map && next['s'] != null) continue; // borrowed by lottie
+    }
+    kf['h'] = 1;
+    changed = true;
+  }
+  return changed;
 }

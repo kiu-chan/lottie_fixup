@@ -8,6 +8,7 @@ import 'bake_loop_expressions.dart';
 import 'bake_options.dart';
 import 'bake_property_expressions.dart';
 import 'sanitize_crashing_layers.dart';
+import 'strip_unsupported_effects.dart';
 
 /// Report of issues found in a Lottie document, without fixing anything.
 class Diagnosis {
@@ -25,6 +26,11 @@ class Diagnosis {
     ),
     this.autoOrientLayersToBake = 0,
     this.skippedAutoOrientLayers = const [],
+    this.effects = const EffectStripResult(
+      effectsRemoved: 0,
+      layersCleared: 0,
+      effectNames: [],
+    ),
   });
 
   /// Audio layers (`ty: 6`) across the root and all precomp assets. These
@@ -76,6 +82,11 @@ class Diagnosis {
   /// `"<layer descriptor>: <reason>"`.
   final List<String> skippedAutoOrientLayers;
 
+  /// Layer effects `fix` will remove because `lottie` never renders them —
+  /// Expression Controls and the like — which make `lottie` warn "Lottie
+  /// doesn't support layer effects" on load. See `stripUnsupportedEffects`.
+  final EffectStripResult effects;
+
   bool get hasIssues =>
       audioLayers > 0 ||
       emptyPrecomps > 0 ||
@@ -86,7 +97,8 @@ class Diagnosis {
       sanitize.layersMissingTransform.isNotEmpty ||
       sanitize.propertiesWithEmptyKeyframes.isNotEmpty ||
       autoOrientLayersToBake > 0 ||
-      skippedAutoOrientLayers.isNotEmpty;
+      skippedAutoOrientLayers.isNotEmpty ||
+      effects.changed;
 }
 
 /// Inspects a decoded Lottie [doc] (and its [rawJson] source) without
@@ -140,6 +152,7 @@ Diagnosis diagnose(
   final bake = bakeLoopExpressions(freshDoc);
   final propertyBake = bakePropertyExpressions(freshDoc, options: options);
   final autoOrient = bakeAutoOrient(freshDoc);
+  final effects = stripUnsupportedEffects(freshDoc);
 
   return Diagnosis(
     audioLayers: audioLayers,
@@ -150,5 +163,6 @@ Diagnosis diagnose(
     sanitize: sanitize,
     autoOrientLayersToBake: autoOrient.layersBaked,
     skippedAutoOrientLayers: autoOrient.skippedLayers,
+    effects: effects,
   );
 }

@@ -1,7 +1,15 @@
 import 'dart:convert';
+import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lottie/lottie.dart';
 import 'package:lottie_fixup/lottie_fixup.dart';
+
+/// Draws [composition] at [progress] onto a throwaway canvas.
+void _drawAt(LottieComposition composition, double progress) {
+  final drawable = LottieDrawable(composition)..setProgress(progress);
+  drawable.draw(Canvas(PictureRecorder()), const Rect.fromLTWH(0, 0, 200, 200));
+}
 
 void main() {
   test('fixes a raw, unbaked After Effects export at load time', () async {
@@ -224,4 +232,152 @@ void main() {
     expect(composition, isNotNull);
     expect(composition!.layers, hasLength(1));
   });
+
+  test(
+    'holds a keyframe with no end value and drops ignored effects',
+    () async {
+      // A shape layer whose rotation is left with a single keyframe and no
+      // `e`, plus an expression control lottie never renders.
+      final raw = jsonEncode({
+        'v': '5.5.2',
+        'fr': 30,
+        'ip': 0,
+        'op': 60,
+        'w': 200,
+        'h': 200,
+        'nm': 'lone keyframe',
+        'ddd': 0,
+        'assets': <dynamic>[],
+        'layers': [
+          {
+            'ddd': 0,
+            'ind': 1,
+            'ty': 4,
+            'nm': 'shape',
+            'sr': 1,
+            'ks': {
+              'o': {'a': 0, 'k': 100},
+              'r': {
+                'a': 1,
+                'k': [
+                  {
+                    'i': {
+                      'x': [0.5],
+                      'y': [1],
+                    },
+                    'o': {
+                      'x': [0.5],
+                      'y': [0],
+                    },
+                    't': 0,
+                    's': [45],
+                  },
+                ],
+              },
+              'p': {
+                'a': 0,
+                'k': [100, 100, 0],
+              },
+              'a': {
+                'a': 0,
+                'k': [0, 0, 0],
+              },
+              's': {
+                'a': 0,
+                'k': [100, 100, 100],
+              },
+            },
+            'ao': 0,
+            'ef': [
+              {
+                'ty': 5,
+                'nm': 'Amount',
+                'mn': 'ADBE Slider Control',
+                'ef': [
+                  {
+                    'ty': 0,
+                    'nm': 'Slider',
+                    'v': {'a': 0, 'k': 1},
+                  },
+                ],
+              },
+            ],
+            'shapes': [
+              {
+                'ty': 'gr',
+                'it': [
+                  {
+                    'ty': 'rc',
+                    'd': 1,
+                    'p': {
+                      'a': 0,
+                      'k': [0, 0],
+                    },
+                    's': {
+                      'a': 0,
+                      'k': [50, 50],
+                    },
+                    'r': {'a': 0, 'k': 0},
+                  },
+                  {
+                    'ty': 'fl',
+                    'c': {
+                      'a': 0,
+                      'k': [1, 0, 0, 1],
+                    },
+                    'o': {'a': 0, 'k': 100},
+                    'r': 1,
+                  },
+                  {
+                    'ty': 'tr',
+                    'p': {
+                      'a': 0,
+                      'k': [0, 0],
+                    },
+                    'a': {
+                      'a': 0,
+                      'k': [0, 0],
+                    },
+                    's': {
+                      'a': 0,
+                      'k': [100, 100],
+                    },
+                    'r': {'a': 0, 'k': 0},
+                    'o': {'a': 0, 'k': 100},
+                  },
+                ],
+              },
+            ],
+            'ip': 0,
+            'op': 60,
+            'st': 0,
+            'bm': 0,
+          },
+        ],
+      });
+
+      // Unfixed: lottie warns about the effect, and throws as soon as the
+      // rotation is drawn.
+      final unfixed = await LottieComposition.fromBytes(utf8.encode(raw));
+      expect(unfixed.warnings, isNotEmpty);
+      expect(
+        () => _drawAt(unfixed, 0.5),
+        throwsA(
+          isA<Exception>().having(
+            (e) => '$e',
+            'message',
+            contains('Missing values for keyframe'),
+          ),
+        ),
+      );
+
+      final composition = await fixupLottieDecoder(utf8.encode(raw));
+
+      expect(composition, isNotNull);
+      expect(composition!.warnings, isEmpty);
+      for (final progress in [0.0, 0.5, 1.0]) {
+        _drawAt(composition, progress);
+      }
+    },
+  );
 }

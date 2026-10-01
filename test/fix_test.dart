@@ -117,4 +117,41 @@ void main() {
     expect(r, {'a': 0, 'k': 0});
     expect(fix(doc).changed, isFalse);
   });
+
+  test(
+    'fix holds keyframes without an end value and strips ignored effects',
+    () {
+      final doc = {
+        'op': 24,
+        'layers': [
+          {
+            'ty': 4,
+            'ks': {
+              'r': {
+                'a': 1,
+                'k': [
+                  {
+                    't': 0,
+                    's': [90],
+                  },
+                ],
+              },
+            },
+            'ef': [
+              {'ty': 5, 'nm': 'Speed', 'ef': <dynamic>[]},
+            ],
+          },
+        ],
+        'assets': <dynamic>[],
+      };
+
+      final first = fix(doc);
+      expect(first.changed, isTrue);
+      expect(first.sanitize.keyframesWithoutEndValueFixed, 1);
+      expect(first.effects.effectsRemoved, 1);
+      expect(first.effects.effectNames, ['Speed']);
+
+      expect(fix(doc).changed, isFalse);
+    },
+  );
 }

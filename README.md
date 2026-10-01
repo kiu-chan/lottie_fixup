@@ -2,9 +2,10 @@
 
 Fixes Lottie/Bodymovin exports that crash, freeze or misrender in the
 [`lottie`](https://pub.dev/packages/lottie) Flutter package: malformed
-layers/assets/masks/shape content, expressions that `lottie` doesn't
-execute (`loopOut()`/`loopIn()`, `wiggle()`, `random()`, `time`-based
-motion, cross-layer links), and auto-oriented layers it sets spinning.
+layers/assets/masks/shape content/keyframes, expressions that `lottie`
+doesn't execute (`loopOut()`/`loopIn()`, `wiggle()`, `random()`,
+`time`-based motion, cross-layer links), auto-oriented layers it sets
+spinning, and layer effects it ignores.
 
 ## Features
 
@@ -25,6 +26,12 @@ motion, cross-layer links), and auto-oriented layers it sets spinning.
   actual keyframes (which crashes `lottie` the same way, but has no safe
   default to substitute) is reported rather than guessed at — see
   `SanitizeResult.propertiesWithEmptyKeyframes`.
+- **Stops mid-playback `Missing values for keyframe.` crashes** — an
+  animated property left with a keyframe that has no end value and no next
+  keyframe to borrow one from (typically a lone keyframe without `e`) throws
+  the first time `lottie` draws it, i.e. only once its layer comes into
+  view. Such a keyframe becomes a hold keyframe, keeping its value, as in
+  After Effects.
 - **Bakes `loopOut()`/`loopIn()` expressions** into real keyframes, so
   looping animations don't freeze after their first cycle (`lottie` doesn't
   execute expressions). All four After Effects loop modes are supported in
@@ -58,6 +65,11 @@ motion, cross-layer links), and auto-oriented layers it sets spinning.
   orientation After Effects shows — the motion path's tangent, honoring each
   segment's easing, plus the layer's own rotation — into plain rotation
   keyframes and turns auto-orient off.
+- **Removes layer effects `lottie` ignores** — Expression Controls
+  (Slider/Angle/Checkbox Control...) and effects it can't draw (Brightness &
+  Contrast, Tint...) — which otherwise put "Lottie doesn't support layer
+  effects" in the composition's `warnings`. Gaussian Blur and Drop Shadow,
+  which `lottie` does render, are kept.
 - **Prunes empty precomps** and now-unreferenced assets left behind by the
   fixes above.
 - Use it **at load time** (drop-in decoder, no build step) or **ahead of
@@ -69,7 +81,7 @@ Add the dependency:
 
 ```yaml
 dependencies:
-  lottie_fixup: ^1.1.1
+  lottie_fixup: ^1.2.0
 ```
 
 Only using the [CLI](#ahead-of-time--cli)? Add it under `dev_dependencies`

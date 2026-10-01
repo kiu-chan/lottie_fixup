@@ -17,3 +17,5 @@ export 'src/diagnose.dart' show Diagnosis, diagnose;
 export 'src/fix.dart' show FixResult, fix;
 export 'src/sanitize_crashing_layers.dart'
     show SanitizeResult, sanitizeCrashingLayers, audioLayerType;
+export 'src/strip_unsupported_effects.dart'
+    show EffectStripResult, stripUnsupportedEffects;

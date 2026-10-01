@@ -1,3 +1,27 @@
+## 1.2.0
+
+- **Fixed a real crash**: an animated property left with a keyframe that
+  has no `e` and nothing to borrow one from — typically a single keyframe,
+  the leftover of deleting all but one keyframe in After Effects without
+  removing the stopwatch — makes `lottie` throw `Missing values for
+  keyframe.` the first time it draws that property. That happens when the
+  layer comes into view, not when the file is parsed, so it only shows up
+  partway through playback. `sanitizeCrashingLayers` (and so `fix`,
+  `fixupLottieDecoder` and the CLI) now resolves end values the way
+  `lottie` does and turns any keyframe still left without one into a hold
+  keyframe (`"h": 1`), which is what After Effects shows for it. Counted in
+  the new `SanitizeResult.keyframesWithoutEndValueFixed`, reported by
+  `diagnose`.
+- **New `stripUnsupportedEffects` pass**, run last by `fix`: removes layer
+  effects (`ef`) `lottie` never renders — Expression Controls such as
+  Slider/Angle/Checkbox Control, and effects like Brightness & Contrast or
+  Tint — so the composition loads without "Lottie doesn't support layer
+  effects" in its `warnings`. Gaussian Blur and Drop Shadow, the two effects
+  `lottie` does render, are kept. A layer left with an empty `ef` list loses
+  the key too, since `lottie` warns about the key itself. New
+  `FixResult.effects` and `Diagnosis.effects`, both with defaults, so
+  existing constructor calls keep compiling.
+
 ## 1.1.1
 
 - Fixed the README's CLI instructions: `dart pub global activate

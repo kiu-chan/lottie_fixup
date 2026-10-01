@@ -229,5 +229,40 @@ void main() {
       // Read-only: the caller's own document keeps its auto-orient.
       expect(((doc['layers'] as List).first as Map)['ao'], 1);
     });
+
+    test('reports keyframes without an end value and ignored effects', () {
+      final doc = {
+        'op': 24,
+        'layers': [
+          {
+            'ty': 4,
+            'ks': {
+              'r': {
+                'a': 1,
+                'k': [
+                  {
+                    't': 0,
+                    's': [90],
+                  },
+                ],
+              },
+            },
+            'ef': [
+              {'ty': 5, 'nm': 'Speed', 'ef': <dynamic>[]},
+            ],
+          },
+        ],
+        'assets': <dynamic>[],
+      };
+      final raw = jsonEncode(doc);
+
+      final report = diagnose(raw, doc);
+
+      expect(report.hasIssues, isTrue);
+      expect(report.sanitize.keyframesWithoutEndValueFixed, 1);
+      expect(report.effects.effectNames, ['Speed']);
+      // diagnose never touches the caller's document.
+      expect(jsonEncode(doc), raw);
+    });
   });
 }
