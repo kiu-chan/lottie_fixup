@@ -343,7 +343,11 @@ int _bakeCycleForward(
     }
     rep += 1;
   }
-  final lastSegment = (pingpong && rep.isOdd) ? segBackward : segForward;
+  // The trailing point closes off repetition `rep - 1` (the last one
+  // actually written above), not `rep` itself, which was never started. For
+  // 'pingpong' the two run in opposite directions, and ending on the
+  // unwritten one's value would hold the last pass still.
+  final lastSegment = (pingpong && (rep - 1).isOdd) ? segBackward : segForward;
   out.add({'t': t0 + rep * period, 's': lastSegment.last['s']});
 
   prop['k'] = out;

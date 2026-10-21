@@ -96,6 +96,57 @@ void main() {
       expect(reverseStart['ti'], [1, 0, 0]);
     });
 
+    test('pingpong closes the last pass on the value that pass ends on', () {
+      // A 0 -> 10 swing over 5 frames. Up to frame 20 the passes run
+      // forward, back, forward, back, so the property comes back to 0; up to
+      // frame 12 the last pass written is the third one, forward, ending on
+      // 10. Either way the closing keyframe is the end of that last pass:
+      // taking it from the next, unwritten pass instead would hold the last
+      // pass still.
+      for (final (op, values) in [
+        (
+          20,
+          [
+            [0],
+            [10],
+            [0],
+            [10],
+            [0],
+          ],
+        ),
+        (
+          12,
+          [
+            [0],
+            [10],
+            [0],
+            [10],
+          ],
+        ),
+      ]) {
+        final prop = _property([
+          {
+            't': 0,
+            's': [0],
+          },
+          {
+            't': 5,
+            's': [10],
+          },
+        ], "loopOut('pingpong')");
+
+        bakeLoopExpressions({'op': op, 'nested': prop});
+
+        final k = (prop['k'] as List).cast<Map<String, dynamic>>();
+        expect(
+          [for (final kf in k) kf['t']],
+          [for (var i = 0; i < values.length; i++) i * 5],
+          reason: 'op $op',
+        );
+        expect([for (final kf in k) kf['s']], values, reason: 'op $op');
+      }
+    });
+
     test('loopIn closed cycle repeats backward keyframes from the start', () {
       final prop = _property([
         {
@@ -282,6 +333,41 @@ void main() {
       );
       expect(seam['s'], [150]);
       expect(k.firstWhere((kf) => kf['t'] == 10)['s'], [50]);
+    });
+
+    test("loopOutDuration('pingpong', 1) ends its last pass on that pass's "
+        'value', () {
+      final prop = _property([
+        {
+          't': 5,
+          's': [0],
+        },
+        {
+          't': 10,
+          's': [10],
+        },
+      ], "loopOutDuration('pingpong', 1)");
+      // At fr=10 one second is the 10-frame span 0..10: a flat hold at 0,
+      // then the ramp to 10. Back over 10..20, forward again over 20..30,
+      // so frame 30 closes a forward pass on 10.
+      final doc = {'ip': 0, 'op': 30, 'fr': 10, 'nested': prop};
+
+      bakeLoopExpressions(doc);
+
+      final k = (prop['k'] as List).cast<Map<String, dynamic>>();
+      expect([for (final kf in k) kf['t']], [0, 5, 10, 15, 20, 25, 30]);
+      expect(
+        [for (final kf in k) kf['s']],
+        [
+          [0],
+          [0],
+          [10],
+          [0],
+          [0],
+          [0],
+          [10],
+        ],
+      );
     });
 
     test('loopOutDuration shorter than the keyframed segment is not supported '

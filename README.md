@@ -87,7 +87,7 @@ Add the dependency:
 
 ```yaml
 dependencies:
-  lottie_fixup: ^1.2.1
+  lottie_fixup: ^1.2.2
 ```
 
 Only using the [CLI](#ahead-of-time--cli)? Add it under `dev_dependencies`

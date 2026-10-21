@@ -1,3 +1,15 @@
+## 1.2.2
+
+- **Fixed the last pass of a baked `loopOut('pingpong')` ending on the
+  wrong value**: the keyframe that closes the baked loop took its value
+  from the pass after the last one written, which runs the other way. So
+  the final pass ended where it started instead of swinging back — with a
+  two-keyframe swing it simply held still — and an animation played on a
+  loop jumped back each time it restarted. The closing keyframe now ends
+  the last pass written, as `loopOut('offset')` already did. Also applies
+  to `loopOutDuration('pingpong', …)`; `'cycle'` and `loopIn` were not
+  affected.
+
 ## 1.2.1
 
 - **Fixed a part blinking out once per loop**: a layer inside a
